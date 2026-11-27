@@ -3,11 +3,15 @@ name: Build APK
 on:
   push:
     branches: [main]
+    paths: ['app_src/**', 'app_firebase/**', 'scripts/patch_android.py', '.github/workflows/build-apk.yml']
   workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      # true bila secret GOOGLE_SERVICES_JSON diisi -> push Firebase diaktifkan; kosong -> build biasa tanpa Firebase
+      HAS_FIREBASE: ${{ secrets.GOOGLE_SERVICES_JSON != '' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -22,51 +26,32 @@ jobs:
           cache: true
 
       - name: Buat kerangka project Android
-        run: flutter create --platforms=android --org id.agribot --project-name agribot build_app
+        run: flutter create --platforms=android --org id.akarsiaga --project-name akar_siaga build_app
 
       - name: Salin kode aplikasi
         run: |
           rm -rf build_app/lib build_app/test
           cp -r app_src/. build_app/
 
-      - name: Patch Android (izin, HTTP lokal, desugaring)
-        working-directory: build_app
+      - name: Siapkan Firebase (hanya bila secret GOOGLE_SERVICES_JSON ada)
+        if: env.HAS_FIREBASE == 'true'
+        env:
+          GSJ: ${{ secrets.GOOGLE_SERVICES_JSON }}
         run: |
-          python3 - <<'EOF'
-          import os
-          # --- Manifest: internet, notifikasi, HTTP tanpa TLS (alat lokal & server tanpa HTTPS) ---
-          p = 'android/app/src/main/AndroidManifest.xml'
-          s = open(p).read()
-          perms = '''
-              <uses-permission android:name="android.permission.INTERNET"/>
-              <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
-          '''
-          assert '<application' in s
-          s = s.replace('<application', perms + '<application android:usesCleartextTraffic="true"', 1)
-          open(p, 'w').write(s)
-          # --- Core library desugaring (dibutuhkan flutter_local_notifications) ---
-          done = False
-          for f in ['android/app/build.gradle.kts', 'android/app/build.gradle']:
-              if not os.path.exists(f):
-                  continue
-              g = open(f).read()
-              assert 'compileOptions {' in g
-              if f.endswith('.kts'):
-                  g = g.replace('compileOptions {', 'compileOptions {\n        isCoreLibraryDesugaringEnabled = true', 1)
-                  g += '\ndependencies {\n    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.4")\n}\n'
-              else:
-                  g = g.replace('compileOptions {', 'compileOptions {\n        coreLibraryDesugaringEnabled true', 1)
-                  g += "\ndependencies {\n    coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:2.1.4'\n}\n"
-              open(f, 'w').write(g)
-              done = True
-          assert done
-          EOF
-          sed -i 's/android:label="[^"]*"/android:label="AgriBot"/' android/app/src/main/AndroidManifest.xml
+          printf '%s' "$GSJ" > build_app/android/app/google-services.json
+          cp -r app_firebase/. build_app/
+          cd build_app && flutter pub add firebase_core firebase_messaging
+
+      - name: Patch Android (izin, desugaring, Firebase bila aktif)
+        run: |
+          FLAG=""
+          if [ "$HAS_FIREBASE" = "true" ]; then FLAG="--firebase"; fi
+          python3 scripts/patch_android.py build_app $FLAG
 
       - run: flutter pub get
         working-directory: build_app
 
-      - name: Analisis kode (gagalkan build bila ada error)
+      - name: Analisis kode
         run: flutter analyze --no-fatal-infos --no-fatal-warnings
         working-directory: build_app
 
@@ -75,5 +60,5 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: AgriBot-apk
+          name: AkarSiaga-apk
           path: build_app/build/app/outputs/flutter-apk/app-release.apk
