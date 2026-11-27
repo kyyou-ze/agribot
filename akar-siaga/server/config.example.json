@@ -1,0 +1,9 @@
+{
+  "API_KEY": "ganti-dengan-kunci-rahasia-panjang",
+  "GEMINI_API_KEY": "",
+  "GEMINI_MODEL": "gemini-flash-latest",
+  "AI_DAILY_LIMIT": 30,
+  "TG_BOT_TOKEN": "",
+  "NTFY_SERVER": "https://ntfy.sh",
+  "FIREBASE_SA_FILE": "firebase-service-account.json"
+}
