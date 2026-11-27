@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'ai_page.dart';
 import 'state.dart';
 import 'widgets.dart';
 
@@ -24,7 +25,7 @@ class HomePage extends StatelessWidget {
       Row(children: [
         Expanded(
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text('AgriBot', style: tt.headlineSmall?.copyWith(fontWeight: FontWeight.w800)),
+            Text('Akar Siaga', style: tt.headlineSmall?.copyWith(fontWeight: FontWeight.w800)),
             Text(s.plant.isEmpty ? 'Pilih tanaman di tab Tanaman' : '${presetEmoji(s.plant)} ${s.plant}'),
           ]),
         ),
@@ -153,6 +154,21 @@ class HomePage extends StatelessWidget {
               label: Text(s.pump ? 'Matikan pompa' : 'Siram sekarang'),
             ),
           ),
+        ]),
+      ),
+      Panel(
+        color: cs.tertiaryContainer.withValues(alpha: .45),
+        onTap: () => openAi(c, s),
+        child: Row(children: [
+          const Icon(Icons.auto_awesome),
+          const SizedBox(width: 12),
+          const Expanded(
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text('Asisten AI', style: TextStyle(fontWeight: FontWeight.w700)),
+              Text('Tanya soal tanaman, minta saran pengaturan'),
+            ]),
+          ),
+          const Icon(Icons.chevron_right),
         ]),
       ),
     ]);
@@ -455,6 +471,9 @@ class _HistoryPageState extends State<HistoryPage> {
         Panel(
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
           margin: const EdgeInsets.only(bottom: 8),
+          onTap: e.kind == 2
+              ? () => openAi(c, s, prompt: 'Jelaskan kemungkinan penyebab dan langkah cek untuk peringatan ini: "${e.text}".')
+              : null,
           child: Row(children: [
             Icon(
               e.kind == 1 ? Icons.water_drop : (e.kind == 2 ? Icons.warning_amber_rounded : Icons.info_outline),

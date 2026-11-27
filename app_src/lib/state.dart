@@ -4,11 +4,13 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'ai.dart';
 import 'link.dart';
+import 'push/push_service.dart';
 
 enum Net { ap, sta, cloud }
 
-const netNames = {Net.ap: 'Hotspot AgriBot', Net.sta: 'Wi-Fi Router', Net.cloud: 'Cloud (Internet)'};
+const netNames = {Net.ap: 'Hotspot Akar Siaga', Net.sta: 'Wi-Fi Router', Net.cloud: 'Cloud (Internet)'};
 const netCodes = {Net.ap: 'A', Net.sta: 'S', Net.cloud: 'S'};
 
 class Preset {
@@ -78,6 +80,9 @@ class AppState extends ChangeNotifier {
   final sched = List.generate(4, (i) => Sched(false, 6 + i * 4, 0, 5, 127));
   final samples = <Sample>[];
   final events = <Ev>[];
+  final aiMsgs = <AiMsg>[];
+  String? fcmToken;
+  bool pushOn = true;
 
   String get devNetName => devNet == 'S' ? netNames[Net.sta]! : netNames[Net.ap]!;
   String cfgStr(String k, [String d = '']) => cfg[k] ?? d;
@@ -111,6 +116,12 @@ class AppState extends ChangeNotifier {
     } catch (_) {}
     await _np.initialize(const InitializationSettings(android: AndroidInitializationSettings('@mipmap/ic_launcher')));
     Permission.notification.request();
+    await _np
+        .resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>()
+        ?.createNotificationChannel(const AndroidNotificationChannel('akarsiaga_push', 'Notifikasi Akar Siaga (push)',
+            importance: Importance.high));
+    pushOn = _p.getBool('pushOn') ?? true;
+    _initPush();
   }
 
   // ---------- koneksi ----------
@@ -123,7 +134,7 @@ class AppState extends ChangeNotifier {
   Future<void> _connect() async {
     if (busy || connected) return;
     busy = true;
-    status = net == Net.cloud ? 'Menghubungi server...' : 'Mencari AgriBot di jaringan...';
+    status = net == Net.cloud ? 'Menghubungi server...' : 'Mencari Akar Siaga di jaringan...';
     notifyListeners();
     try {
       Link l;
@@ -135,7 +146,7 @@ class AppState extends ChangeNotifier {
       } else {
         String? h = await discoverHost();
         h ??= net == Net.ap ? '192.168.4.1' : (host.isEmpty ? null : host);
-        if (h == null) throw 'AgriBot tidak ditemukan. Pastikan HP satu WiFi dengan alat, atau isi IP manual di Setelan.';
+        if (h == null) throw 'Akar Siaga tidak ditemukan. Pastikan HP satu WiFi dengan alat, atau isi IP manual di Setelan.';
         l = LocalLink(h, _dropped);
       }
       _link = l;
@@ -153,6 +164,7 @@ class AppState extends ChangeNotifier {
       online = true;
       status = 'Terhubung';
       _ev('Terhubung via ${netNames[net]}', 0);
+      registerPush();
       if (net == Net.cloud) {
         _loadCloud();
         _hist = Timer.periodic(const Duration(seconds: 60), (_) => _loadCloud());
@@ -182,7 +194,7 @@ class AppState extends ChangeNotifier {
     _hist?.cancel();
     status = 'Koneksi terputus - mencoba lagi...';
     _ev('Koneksi terputus', 2);
-    _notify('Koneksi terputus', 'AgriBot tidak lagi terhubung dengan HP.', nConn);
+    _notify('Koneksi terputus', 'Akar Siaga tidak lagi terhubung dengan HP.', nConn);
     _ls?.cancel();
     _link?.close();
     _link = null;
@@ -335,7 +347,7 @@ class AppState extends ChangeNotifier {
       t,
       b,
       const NotificationDetails(
-        android: AndroidNotificationDetails('agribot', 'Peringatan AgriBot',
+        android: AndroidNotificationDetails('akarsiaga', 'Peringatan Akar Siaga',
             importance: Importance.high, priority: Priority.high),
       ),
     );
@@ -394,6 +406,7 @@ class AppState extends ChangeNotifier {
     _p.setString('key', key);
     _p.setString('did', id);
     _p.setString('host', h);
+    registerPush();
     notifyListeners();
   }
 
@@ -410,7 +423,7 @@ class AppState extends ChangeNotifier {
 
   Future<void> toHotspot() async {
     await send('N:A');
-    await _afterSwitch(Net.ap, 'Alat restart ke Hotspot. Sambungkan HP ke WiFi "AgriBot-XXXX", lalu tekan Hubungkan.');
+    await _afterSwitch(Net.ap, 'Alat restart ke Hotspot. Sambungkan HP ke WiFi "AkarSiaga-XXXX", lalu tekan Hubungkan.');
   }
 
   Future<void> _afterSwitch(Net n, String msg) async {
@@ -474,6 +487,98 @@ class AppState extends ChangeNotifier {
     } catch (e) {
       return 'Gagal: $e';
     }
+  }
+
+  // ---------- push Firebase ----------
+  Future<void> _initPush() async {
+    if (!pushAvailable) return;
+    fcmToken = await initPush((t) {
+      fcmToken = t;
+      registerPush();
+    });
+    registerPush();
+  }
+
+  /// Daftarkan (atau cabut) token Firebase HP ini di server. Mengembalikan pesan untuk pengguna.
+  Future<String> registerPush({bool? enable}) async {
+    if (enable != null) {
+      pushOn = enable;
+      _p.setBool('pushOn', enable);
+      notifyListeners();
+    }
+    if (!pushAvailable) return 'Build ini belum memakai Firebase.';
+    final t = fcmToken, a = _api();
+    if (t == null) return 'Token Firebase belum tersedia (cek izin notifikasi dan konfigurasi Firebase).';
+    if (a == null || devId.isEmpty) return 'Isi URL server, kunci API, dan ID alat dulu.';
+    try {
+      await a.post('/api/app/push', {'id': devId}, jsonEncode({'token': t, 'enabled': pushOn}));
+      return pushOn ? 'HP ini terdaftar untuk push.' : 'Push untuk HP ini dimatikan.';
+    } catch (e) {
+      return 'Gagal mendaftar push: $e';
+    }
+  }
+
+  // ---------- asisten AI ----------
+  AiService? aiService() =>
+      (serverReady && devId.isNotEmpty) ? AiService(CloudApi(normUrl(serverUrl), apiKey), devId) : null;
+
+  String _p2(int n) => n.toString().padLeft(2, '0');
+
+  /// Ringkasan kondisi alat untuk AI. Dikirim apa adanya ke server (bukan rahasia: tanpa WiFi/kunci).
+  Map<String, dynamic> aiContext() {
+    final since = _now() - 86400;
+    final d = samples.where((e) => e.t >= since).toList();
+    Map<String, dynamic>? stat;
+    if (d.isNotEmpty) {
+      final so = d.map((e) => e.soil).toList();
+      final tm = d.map((e) => e.temp).where((t) => t > -50).toList();
+      stat = {
+        'jumlah_sampel': d.length,
+        'tanah_min': so.reduce((a, b) => a < b ? a : b),
+        'tanah_maks': so.reduce((a, b) => a > b ? a : b),
+        'tanah_rata2': (so.reduce((a, b) => a + b) / so.length).round(),
+        if (tm.isNotEmpty) 'suhu_maks': tm.reduce((a, b) => a > b ? a : b),
+      };
+    }
+    final step = d.length <= 24 ? 1 : (d.length / 24).ceil();
+    final ev24 = events.where((e) => e.t >= since).toList();
+    String fmt(int t) {
+      final x = DateTime.fromMillisecondsSinceEpoch(t * 1000);
+      return '${_p2(x.day)}/${_p2(x.month)} ${_p2(x.hour)}:${_p2(x.minute)}';
+    }
+
+    return {
+      'tanaman': plant.isEmpty ? 'belum dipilih' : plant,
+      'terhubung_ke_alat': connected,
+      'sekarang': {
+        'tanah_persen': soil,
+        'suhu_c': temp < -50 ? null : temp,
+        'udara_persen': hum,
+        'tangki_ada_air': water,
+        'pompa_menyala': pump,
+        'mode': auto ? 'otomatis' : 'manual',
+      },
+      'pengaturan': {
+        'batas_siram_persen': minSoil,
+        'batas_efektif_persen': effMin,
+        'lama_siram_dtk': run,
+        'jeda_dtk': wait,
+        'batas_per_hari': cfgInt('maxday', 0),
+        'debit_ml_per_dtk': cfgInt('flow', 30),
+        'smart_panas_suhu_c': cfgInt('hT', 0),
+        'smart_panas_tambahan_persen': cfgInt('hB', 10),
+      },
+      'jadwal_aktif': [
+        for (final x in sched)
+          if (x.en) '${_p2(x.h)}:${_p2(x.m)} selama ${x.dur} dtk (hari-bit ${x.days})'
+      ],
+      'statistik_24_jam': stat,
+      'tren_tanah_persen': [for (var i = 0; i < d.length; i += step) d[i].soil],
+      'jumlah_siram_24_jam': ev24.where((e) => e.text.startsWith('Penyiraman selesai')).length,
+      'jumlah_tangki_habis_24_jam': ev24.where((e) => e.text == 'Tangki air habis').length,
+      'air_total_liter': double.parse((cfgInt('tot', 0) * cfgInt('flow', 30) / 1000).toStringAsFixed(1)),
+      'kejadian_terakhir': [for (final e in events.take(8)) '${fmt(e.t)} ${e.text}'],
+    };
   }
 
   void clearHistory() {

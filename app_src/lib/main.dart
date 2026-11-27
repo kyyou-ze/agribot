@@ -7,7 +7,7 @@ Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   final s = AppState();
   await s.init();
-  runApp(AgriApp(s));
+  runApp(AkarSiagaApp(s));
 }
 
 ThemeData _theme(Brightness b) => ThemeData(
@@ -20,15 +20,15 @@ ThemeData _theme(Brightness b) => ThemeData(
       ),
     );
 
-class AgriApp extends StatelessWidget {
+class AkarSiagaApp extends StatelessWidget {
   final AppState s;
-  const AgriApp(this.s, {super.key});
+  const AkarSiagaApp(this.s, {super.key});
 
   @override
   Widget build(BuildContext context) => ListenableBuilder(
         listenable: s,
         builder: (context, _) => MaterialApp(
-          title: 'AgriBot',
+          title: 'Akar Siaga',
           debugShowCheckedModeBanner: false,
           theme: _theme(Brightness.light),
           darkTheme: _theme(Brightness.dark),

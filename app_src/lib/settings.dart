@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'push/push_service.dart';
 import 'state.dart';
 import 'widgets.dart';
 
@@ -92,7 +93,7 @@ class _SettingsPageState extends State<SettingsPage> {
     _key = TextEditingController(text: s.apiKey);
     _id = TextEditingController(text: s.devId);
     _host = TextEditingController(text: s.host);
-    _name = TextEditingController(text: s.cfgStr('name', 'AgriBot'));
+    _name = TextEditingController(text: s.cfgStr('name', 'Akar Siaga'));
     _apw = TextEditingController();
     _ntfy = TextEditingController(text: s.ntfy);
     _tg = TextEditingController(text: s.tg);
@@ -169,13 +170,13 @@ class _SettingsPageState extends State<SettingsPage> {
     return ListView(padding: _pad, children: [
       // ===================== KONEKSI =====================
       heading(c, 'Koneksi HP ke alat'),
-      _mode(Net.ap, 'Alat membuat WiFi sendiri (AgriBot-XXXX, sandi agribot123). Tanpa router & internet.'),
+      _mode(Net.ap, 'Alat membuat WiFi sendiri (AkarSiaga-XXXX, sandi akarsiaga123). Tanpa router & internet.'),
       _mode(Net.sta, 'Alat dan HP di WiFi yang sama (router/hotspot HP lain).'),
       _mode(Net.cloud, 'Lewat internet dari mana saja, via server kamu. Notifikasi push & riwayat 24 jam.'),
       if (s.net == Net.ap)
         Panel(
           color: cs.tertiaryContainer.withValues(alpha: .5),
-          child: const Text('Sambungkan HP ke WiFi "AgriBot-XXXX", pilih "tetap terhubung" bila diminta, matikan data seluler, lalu tekan Hubungkan.'),
+          child: const Text('Sambungkan HP ke WiFi "AkarSiaga-XXXX", pilih "tetap terhubung" bila diminta, matikan data seluler, lalu tekan Hubungkan.'),
         ),
       Panel(
         child: Row(children: [
@@ -198,7 +199,7 @@ class _SettingsPageState extends State<SettingsPage> {
           TextField(
             controller: _url,
             keyboardType: TextInputType.url,
-            decoration: const InputDecoration(labelText: 'URL server (opsional)', hintText: 'https://agribot.domainmu.com'),
+            decoration: const InputDecoration(labelText: 'URL server (opsional)', hintText: 'https://akarsiaga.domainmu.com'),
           ),
           const SizedBox(height: 10),
           TextField(controller: _key, obscureText: true, decoration: const InputDecoration(labelText: 'Kunci API server')),
@@ -363,6 +364,27 @@ class _SettingsPageState extends State<SettingsPage> {
       Panel(
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Text('Real-time walau aplikasi ditutup. Butuh server (URL, kunci, ID alat terisi). Pilih salah satu atau keduanya:', style: tt.bodySmall),
+          const SizedBox(height: 8),
+          Row(children: [
+            Icon(pushAvailable ? Icons.check_circle : Icons.info_outline, size: 18, color: pushAvailable ? Colors.green : cs.outline),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                pushAvailable ? 'Firebase aktif di build ini: push masuk langsung ke aplikasi.' : 'Build ini tanpa Firebase. Pakai ntfy atau Telegram di bawah.',
+                style: tt.bodySmall,
+              ),
+            ),
+          ]),
+          if (pushAvailable)
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              title: const Text('Terima push di HP ini'),
+              value: s.pushOn,
+              onChanged: (v) async {
+                final m = await s.registerPush(enable: v);
+                if (mounted) _snack(m);
+              },
+            ),
           const SizedBox(height: 10),
           TextField(
             controller: _ntfy,
@@ -479,7 +501,7 @@ class _SettingsPageState extends State<SettingsPage> {
           ),
         ]),
       ),
-      Center(child: Text('AgriBot v3.0 - Persimanu 2 Jawa Tengah', style: tt.bodySmall)),
+      Center(child: Text('Akar Siaga v4.0 - Persimanu 2 Jawa Tengah', style: tt.bodySmall)),
     ]);
   }
 }

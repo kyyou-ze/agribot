@@ -18,25 +18,43 @@ String normUrl(String u) {
   return u.replaceAll(RegExp(r'/+$'), '');
 }
 
-/// Klien API server (dipakai Cloud, riwayat, dan pengaturan notifikasi push).
+/// Galat dari server (kode HTTP + isi). [message] mengambil pesan ramah dari JSON {"error": ...}.
+class ApiError implements Exception {
+  final int code;
+  final String body;
+  ApiError(this.code, this.body);
+
+  String get message {
+    try {
+      final j = jsonDecode(body);
+      if (j is Map && j['error'] != null) return j['error'].toString();
+    } catch (_) {}
+    return 'HTTP $code';
+  }
+
+  @override
+  String toString() => 'HTTP $code';
+}
+
+/// Klien API server (dipakai Cloud, riwayat, notifikasi push, dan asisten AI).
 class CloudApi {
   final String base, key;
   CloudApi(this.base, this.key);
   Map<String, String> get _h => {'x-api-key': key};
   Uri _u(String p, Map<String, String> q) => Uri.parse('$base$p').replace(queryParameters: q);
 
-  Future<String> getText(String p, Map<String, String> q) async {
-    final r = await http.get(_u(p, q), headers: _h).timeout(const Duration(seconds: 5));
-    if (r.statusCode != 200) throw 'HTTP ${r.statusCode}';
+  Future<String> getText(String p, Map<String, String> q, {Duration timeout = const Duration(seconds: 5)}) async {
+    final r = await http.get(_u(p, q), headers: _h).timeout(timeout);
+    if (r.statusCode != 200) throw ApiError(r.statusCode, utf8.decode(r.bodyBytes));
     return utf8.decode(r.bodyBytes);
   }
 
   Future<Map<String, dynamic>> getJson(String p, Map<String, String> q) async =>
       jsonDecode(await getText(p, q)) as Map<String, dynamic>;
 
-  Future<String> post(String p, Map<String, String> q, String body) async {
-    final r = await http.post(_u(p, q), headers: _h, body: body).timeout(const Duration(seconds: 8));
-    if (r.statusCode != 200) throw 'HTTP ${r.statusCode}';
+  Future<String> post(String p, Map<String, String> q, String body, {Duration timeout = const Duration(seconds: 8)}) async {
+    final r = await http.post(_u(p, q), headers: _h, body: body).timeout(timeout);
+    if (r.statusCode != 200) throw ApiError(r.statusCode, utf8.decode(r.bodyBytes));
     return utf8.decode(r.bodyBytes);
   }
 }
@@ -143,12 +161,12 @@ Future<String?> discoverHost() async {
         final d = s!.receive();
         if (d == null) return;
         final m = utf8.decode(d.data, allowMalformed: true);
-        if (m.startsWith('AGRIBOT,') && !c.isCompleted) c.complete(m.substring(8).trim());
+        if (m.startsWith('AKARSIAGA,') && !c.isCompleted) c.complete(m.substring(10).trim());
       }
     });
     for (var i = 0; i < 3 && !c.isCompleted; i++) {
-      s.send(utf8.encode('AGRIBOT?'), InternetAddress('255.255.255.255'), 4210);
-      s.send(utf8.encode('AGRIBOT?'), InternetAddress('192.168.4.1'), 4210);
+      s.send(utf8.encode('AKARSIAGA?'), InternetAddress('255.255.255.255'), 4210);
+      s.send(utf8.encode('AKARSIAGA?'), InternetAddress('192.168.4.1'), 4210);
       await Future.delayed(const Duration(milliseconds: 700));
     }
     return await c.future.timeout(const Duration(milliseconds: 600), onTimeout: () => null);

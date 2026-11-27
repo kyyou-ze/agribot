@@ -1,8 +1,0 @@
-{
-  "name": "akar-siaga-server",
-  "version": "3.0.0",
-  "description": "Server cloud Akar Siaga: sinkron alat, riwayat, push (Firebase/ntfy/Telegram), asisten AI",
-  "main": "server.js",
-  "scripts": { "start": "node server.js", "test": "node test/smoke.js" },
-  "engines": { "node": ">=18" }
-}
