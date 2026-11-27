@@ -2,8 +2,8 @@ name: Flatten Folder to Root
 
 # Cara pakai:
 # Kalau hasil unzip kemarin nyangkut di dalam subfolder (misal "VTuberApp/"),
-# workflow ini memindahkan SEMUA isi folder itu ke root repo (menimpa yang lama),
-# menghapus folder asalnya, lalu commit hasilnya.
+# workflow ini memindahkan SEMUA isi folder itu ke root repo, lalu
+# menghapus folder yang sudah kosong itu, lalu commit hasilnya.
 #
 # Jalankan manual: tab Actions > "Flatten Folder to Root" > Run workflow,
 # isi nama foldernya (default sudah "VTuberApp").
@@ -24,34 +24,53 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Pindahkan isi folder ke root (timpa yang lama)
+      - name: Pindahkan isi folder ke root
         env:
-          FOLDER: ${{ github.event.inputs.folder }}
+          FOLDER: ${{ inputs.folder }}
         run: |
-          if [ ! -d "$FOLDER" ]; then
+          # Hapus tanda slash (/) di akhir nama folder jika user mengetik "VTuberApp/"
+          FOLDER="${FOLDER%/}"
+
+          if [ -z "$FOLDER" ] || [ ! -d "$FOLDER" ]; then
             echo "Folder '$FOLDER' tidak ditemukan di root repo, dibatalkan."
             exit 1
           fi
 
-          # Pindahkan ke direktori sementara agar aman jika nama subfolder di dalamnya sama dengan $FOLDER
-          TMP_DIR=$(mktemp -d)
+          echo "Memindahkan isi '$FOLDER/' ke root..."
           shopt -s dotglob nullglob
-          mv "$FOLDER"/* "$TMP_DIR"/
+
+          for item in "$FOLDER"/*; do
+            name="$(basename "$item")"
+
+            # Lewati file/folder sistem seperti .git atau .github jika ada
+            if [ "$name" = ".git" ] || [ "$name" = ".github" ]; then
+              echo "Lewati '$name' (folder sistem)."
+              continue
+            fi
+
+            if [ -e "$name" ] && [ "$name" != "$FOLDER" ]; then
+              echo "Lewati '$name' (sudah ada file/folder dengan nama sama di root)."
+              continue
+            fi
+
+            mv "$item" ./
+          done
+
           shopt -u dotglob nullglob
 
-          # Hapus folder asal yang sudah kosong
-          rm -rf "$FOLDER"
-
-          # Salin semua ke root dengan menimpa file/folder yang sudah ada
-          echo "Memindahkan isi ke root dan menimpa file lama..."
-          cp -rf "$TMP_DIR"/. ./
-          rm -rf "$TMP_DIR"
+          # Hapus folder hanya jika sudah benar-benar kosong
+          if [ -z "$(ls -A "$FOLDER")" ]; then
+            rmdir "$FOLDER"
+            echo "Folder '$FOLDER' berhasil dihapus."
+          else
+            echo "Peringatan: Folder '$FOLDER' tidak dihapus karena masih ada sisa file yang dilewati."
+          fi
 
           echo "Selesai."
 
       - name: Commit hasil
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
-          commit_message: "chore: flatten folder ${{ github.event.inputs.folder }} to root"
+          commit_message: "chore: flatten folder ${{ inputs.folder }} to root"
           file_pattern: "."
           
