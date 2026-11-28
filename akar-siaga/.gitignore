@@ -1,0 +1,12 @@
+# Rahasia & data - JANGAN di-commit
+server/config.json
+server/data.json
+server/data.json.tmp
+server/firebase-service-account.json
+google-services.json
+*.keystore
+# Build
+build_app/
+node_modules/
+__pycache__/
+*.pyc
