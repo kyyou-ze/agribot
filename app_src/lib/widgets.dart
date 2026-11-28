@@ -9,11 +9,13 @@ String fmtEv(int t) {
   return '${two(d.day)}/${two(d.month)} ${hm(d)}';
 }
 
-IconData netIcon(Net n) => n == Net.ap ? Icons.wifi_tethering : (n == Net.sta ? Icons.wifi : Icons.cloud_outlined);
+IconData netIcon(Net n) => n == Net.lan ? Icons.wifi : Icons.cloud_outlined;
 
+/// Kartu dasar: sudut besar, tanpa garis tepi, bayangan lembut. [gradient] untuk kartu utama.
 class Panel extends StatelessWidget {
   final Widget child;
   final Color? color, border;
+  final Gradient? gradient;
   final EdgeInsetsGeometry padding, margin;
   final VoidCallback? onTap;
   const Panel({
@@ -21,71 +23,108 @@ class Panel extends StatelessWidget {
     required this.child,
     this.color,
     this.border,
+    this.gradient,
     this.onTap,
-    this.padding = const EdgeInsets.all(16),
-    this.margin = const EdgeInsets.only(bottom: 12),
+    this.padding = const EdgeInsets.all(18),
+    this.margin = const EdgeInsets.only(bottom: 14),
   });
 
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
+    final dark = Theme.of(context).brightness == Brightness.dark;
+    final base = color ?? (dark ? cs.surfaceContainerHigh : cs.surfaceContainerLowest);
+    final radius = BorderRadius.circular(26);
     return Padding(
       padding: margin,
-      child: Material(
-        color: color ?? cs.surfaceContainerLow,
-        clipBehavior: Clip.antiAlias,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(20),
-          side: BorderSide(
-            color: border ?? cs.outlineVariant.withValues(alpha: .5),
-            width: border == null ? 1 : 2,
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          borderRadius: radius,
+          boxShadow: [
+            BoxShadow(color: Colors.black.withValues(alpha: dark ? 0 : .06), blurRadius: 20, offset: const Offset(0, 8)),
+          ],
+        ),
+        child: Material(
+          color: gradient == null ? base : Colors.transparent,
+          clipBehavior: Clip.antiAlias,
+          shape: RoundedRectangleBorder(
+            borderRadius: radius,
+            side: border == null ? BorderSide.none : BorderSide(color: border!, width: 2),
+          ),
+          child: Ink(
+            decoration: gradient == null ? null : BoxDecoration(gradient: gradient),
+            child: InkWell(onTap: onTap, child: Padding(padding: padding, child: child)),
           ),
         ),
-        child: InkWell(onTap: onTap, child: Padding(padding: padding, child: child)),
       ),
     );
   }
 }
 
 Widget heading(BuildContext c, String t) => Padding(
-      padding: const EdgeInsets.fromLTRB(4, 8, 4, 8),
-      child: Text(t, style: Theme.of(c).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700)),
+      padding: const EdgeInsets.fromLTRB(6, 10, 6, 10),
+      child: Text(
+        t.toUpperCase(),
+        style: Theme.of(c).textTheme.labelLarge?.copyWith(
+              letterSpacing: 1.1,
+              fontWeight: FontWeight.w700,
+              color: Theme.of(c).colorScheme.onSurfaceVariant,
+            ),
+      ),
     );
+
+/// Gaya kolom isian seragam (isi terang, tanpa garis tepi).
+InputDecoration dec(BuildContext c, {String? label, String? hint, String? helper}) {
+  final cs = Theme.of(c).colorScheme;
+  return InputDecoration(
+    labelText: label,
+    hintText: hint,
+    helperText: helper,
+    helperMaxLines: 3,
+    filled: true,
+    fillColor: cs.surfaceContainerHighest.withValues(alpha: .55),
+    border: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: BorderSide.none),
+    contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+  );
+}
 
 class ConnChip extends StatelessWidget {
   final AppState s;
   const ConnChip(this.s, {super.key});
   @override
   Widget build(BuildContext context) {
-    final col = s.connected ? Colors.green.shade600 : Theme.of(context).colorScheme.outline;
+    final cs = Theme.of(context).colorScheme;
+    final ok = s.connected && s.online;
+    final fg = ok ? cs.primary : (s.connected ? cs.error : cs.outline);
+    final label = !s.connected ? 'Offline' : (!s.online ? 'Alat offline' : netNames[s.via]!);
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
-      decoration: BoxDecoration(color: col.withValues(alpha: .14), borderRadius: BorderRadius.circular(30)),
+      decoration: BoxDecoration(color: fg.withValues(alpha: .12), borderRadius: BorderRadius.circular(30)),
       child: Row(mainAxisSize: MainAxisSize.min, children: [
-        Icon(netIcon(s.net), size: 16, color: col),
+        Icon(s.connected ? netIcon(s.via) : Icons.cloud_off_outlined, size: 16, color: fg),
         const SizedBox(width: 6),
-        Text(s.connected ? netNames[s.net]! : 'Offline',
-            style: TextStyle(color: col, fontWeight: FontWeight.w600, fontSize: 12)),
+        Text(label, style: TextStyle(color: fg, fontWeight: FontWeight.w700, fontSize: 12)),
       ]),
     );
   }
 }
 
-class Stat extends StatelessWidget {
+/// Angka kecil di kartu utama (suhu, udara, tangki).
+class MiniStat extends StatelessWidget {
   final IconData icon;
   final String label, value;
-  final Color? color;
-  const Stat(this.icon, this.label, this.value, {super.key, this.color});
+  final Color color;
+  const MiniStat(this.icon, this.label, this.value, this.color, {super.key});
   @override
   Widget build(BuildContext context) => Expanded(
-        child: Panel(
-          margin: const EdgeInsets.symmetric(horizontal: 4),
-          padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 8),
+        child: Container(
+          padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
+          decoration: BoxDecoration(color: color.withValues(alpha: .16), borderRadius: BorderRadius.circular(20)),
           child: Column(children: [
-            Icon(icon, color: color),
-            const SizedBox(height: 6),
-            Text(value, style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w700)),
-            Text(label, style: Theme.of(context).textTheme.bodySmall),
+            Icon(icon, size: 20, color: color),
+            const SizedBox(height: 4),
+            Text(value, style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800, color: color)),
+            Text(label, style: TextStyle(fontSize: 11, color: color.withValues(alpha: .85))),
           ]),
         ),
       );
@@ -114,7 +153,8 @@ class GaugePainter extends CustomPainter {
       ctr + Offset(math.cos(a), math.sin(a)) * (r + 16),
       Paint()
         ..color = tick
-        ..strokeWidth = 3,
+        ..strokeWidth = 3
+        ..strokeCap = StrokeCap.round,
     );
   }
 

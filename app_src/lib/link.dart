@@ -176,3 +176,22 @@ Future<String?> discoverHost() async {
     s?.close();
   }
 }
+
+/// Pemasangan alat baru: ambil semua baris langsung dari alat (mis. 192.168.4.1). null bila tidak terjangkau.
+Future<String?> fetchLocalAll(String host) async {
+  try {
+    final r = await http.get(Uri.http(host, '/api/all')).timeout(const Duration(seconds: 2));
+    return r.statusCode == 200 ? r.body : null;
+  } catch (_) {
+    return null;
+  }
+}
+
+Future<bool> sendLocal(String host, String cmd) async {
+  try {
+    final r = await http.get(Uri.http(host, '/api/cmd', {'c': cmd})).timeout(const Duration(seconds: 4));
+    return r.statusCode == 200;
+  } catch (_) {
+    return false;
+  }
+}

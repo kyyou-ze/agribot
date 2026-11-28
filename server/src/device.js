@@ -2,6 +2,7 @@
 // Logika data dari alat: deteksi kejadian, riwayat, dan alat offline.
 const { db, rt, now, dev } = require('./store');
 const { pushTo } = require('./push');
+const cfg = require('./config');
 
 function ev(id, text, kind) {
   const d = dev(id);
@@ -43,7 +44,7 @@ function onStatus(id, d, line) {
         if (n && base != null && n.water && n.soil < base + 2) {
           alert(id, 'd', 'Penyiraman kurang efektif', 'Kelembaban tidak naik setelah disiram. Cek selang, pompa, dan posisi sensor.', 2);
         }
-      }, 60000);
+      }, cfg.INEFFECTIVE_CHECK_S * 1000);
     }
   } else if (!cur.water) alert(id, 'w', 'Tangki air habis', 'Isi tangki agar penyiraman bisa berjalan.', 2);
   if (!cur.auto && !cur.pump && cur.soil < cur.min - 10 && Date.now() - d.lastDry > 3600e3) {
@@ -57,15 +58,23 @@ function onStatus(id, d, line) {
   }
 }
 
-function startWatchdog() { // tidak ada data > 90 detik = offline
+/** Satu pintu data dari alat (asli maupun simulator): simpan, deteksi kejadian, kembalikan perintah menunggu. */
+function ingest(id, lines) {
+  const d = dev(id);
+  d.ts = Date.now(); d.status = lines[0]; d.extra = lines.slice(1);
+  onStatus(id, d, lines[0]);
+  return d.q.splice(0);
+}
+
+function startWatchdog() { // tidak ada data > OFFLINE_AFTER_S detik = offline
   return setInterval(() => {
     for (const [id, d] of Object.entries(db)) {
-      if (d.online && Date.now() - d.ts > 90000) {
+      if (d.online && Date.now() - d.ts > cfg.OFFLINE_AFTER_S * 1000) {
         d.online = false;
         alert(id, 'o', 'Alat offline', 'Tidak ada data dari alat lebih dari 90 detik. Cek listrik dan WiFi.', 2);
       }
     }
-  }, 15000);
+  }, Math.min(15000, cfg.OFFLINE_AFTER_S * 500));
 }
 
-module.exports = { validStatus, onStatus, startWatchdog };
+module.exports = { validStatus, onStatus, ingest, startWatchdog };

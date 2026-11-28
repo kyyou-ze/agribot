@@ -2,9 +2,10 @@
 // Semua endpoint HTTP. Semua (kecuali "/") wajib header x-api-key.
 const cfg = require('./config');
 const { db, now, dev, save } = require('./store');
-const { validStatus, onStatus } = require('./device');
+const { validStatus, ingest } = require('./device');
 const { pushTo } = require('./push');
 const ai = require('./ai');
+const sim = require('./simulator');
 
 const ID_RE = /^[\w-]{3,40}$/;
 const TOKEN_RE = /^[\w:.\-]{8,400}$/;
@@ -33,13 +34,23 @@ module.exports = async function handle(req, res) {
     if (!ID_RE.test(id)) return send(400, 'bad id');
     const lines = body.split('\n').map(s => s.trim()).filter(Boolean);
     if (!lines.length || !validStatus(lines[0])) return send(400, 'bad status');
-    const d = dev(id);
-    d.ts = Date.now(); d.status = lines[0]; d.extra = lines.slice(1);
-    onStatus(id, d, lines[0]);
-    return send(200, d.q.splice(0).join('\n'));
+    return send(200, ingest(id, lines).join('\n'));
   }
 
   if (u.pathname === '/api/ai/status') return json(200, ai.status());
+
+  // ---- tanpa ?id= : daftar alat & mode uji ----
+  if (u.pathname === '/api/app/devices') { // aplikasi memilih alat otomatis
+    const nameOf = d => { const c = d.extra.find(l => l.startsWith('C:')); const m = c && /name=([^;]*)/.exec(c); return m ? m[1] : ''; };
+    return json(200, Object.entries(db).filter(([, d]) => d.status)
+      .map(([id, d]) => ({ id, name: nameOf(d), online: !!d.online, sim: id === sim.ID })));
+  }
+  if (u.pathname === '/api/sim/status') return json(200, { enabled: sim.enabled(), id: sim.ID });
+  if (u.pathname === '/api/sim/scenario' && post) {
+    if (!sim.enabled()) return json(404, { error: 'Mode uji (SIMULATOR) belum aktif di server.' });
+    const r = sim.scenario(u.searchParams.get('name') || '', +u.searchParams.get('secs') || 0);
+    return json(r.ok ? 200 : 400, r);
+  }
 
   // ---- dari aplikasi (butuh ?id=) ----
   const id = u.searchParams.get('id') || '';

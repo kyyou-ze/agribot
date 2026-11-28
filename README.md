@@ -2,13 +2,11 @@
 
 Penyiram tanaman otomatis berbasis ESP32 + aplikasi Android, dengan asisten AI dan notifikasi push.
 
-| Cara HP terhubung | Cara kerja | Perlu internet? |
-|---|---|---|
-| **Hotspot Akar Siaga** | Alat membuat WiFi `AkarSiaga-XXXX` (sandi bawaan `akarsiaga123`) | Tidak |
-| **Wi-Fi Router** | Alat & HP satu WiFi, alat ditemukan otomatis | Tidak |
-| **Cloud** | Alat → server → aplikasi, dari mana saja | Ya |
+HP terhubung ke alat lewat **Wi-Fi** (satu jaringan, tanpa internet) atau **Cloud** (lewat server, dari mana saja).
+Mode **Otomatis** (bawaan): coba Wi-Fi dulu, kalau alat tidak ada di jaringan itu pindah ke Cloud sendiri.
+Hotspot `AkarSiaga-XXXX` (sandi `akarsiaga123`) hanya dipakai sekali saat **memasang alat baru**.
 
-Fitur: kontrol manual/otomatis, preset tanaman, jadwal (4 slot), riwayat & grafik, smart panas, batas siram per hari,
+Fitur: pemasangan terpandu, koneksi otomatis, mode uji (simulator), 4 palet warna + mode gelap, kontrol manual/otomatis, preset tanaman, jadwal (4 slot), riwayat & grafik, smart panas, batas siram per hari,
 estimasi pemakaian air, deteksi penyiraman tidak efektif, notifikasi push (Firebase / ntfy / Telegram), asisten AI (Gemini).
 
 ## Struktur
@@ -36,6 +34,9 @@ Egg Node.js 18+, startup file `server.js`, tanpa `npm install`. Isi pengaturan l
 | Kunci | Fungsi |
 |---|---|
 | `API_KEY` | **Wajib**, ≥ 8 karakter, panjang dan acak |
+| `PUBLIC_URL` | Alamat server dari luar (mis. `https://akar.domainmu.com`). Bila diisi, log server menampilkan **kode sambung** yang mengisi aplikasi otomatis |
+| `SIMULATOR` | `1` = aktifkan **mode uji** (alat virtual `AkarSiaga-DEMO`) saat alat asli belum jadi |
+| `SIM_SPEED` | Kecepatan tanah mengering di simulator (bawaan 6; makin besar makin cepat) |
 | `GEMINI_API_KEY` | Kunci dari Google AI Studio (mengaktifkan fitur AI) |
 | `GEMINI_MODEL` | Nama model; bawaan `gemini-flash-latest`. Cek daftar model terbaru di AI Studio |
 | `AI_DAILY_LIMIT` | Batas pemakaian AI per alat per hari (bawaan 30) |
@@ -71,10 +72,17 @@ Untuk mengaktifkan push langsung ke aplikasi:
    `firebase-service-account.json` (lewat File Manager; **jangan** lewat GitHub atau chat).
 4. Aplikasi > Setelan > Notifikasi push: HP terdaftar otomatis, tekan **Kirim tes**.
 
-## 5. Setup pertama
-1. Nyalakan alat → WiFi `AkarSiaga-XXXX` muncul. Sambungkan HP (matikan data seluler), aplikasi > Setelan > mode Hotspot > Hubungkan.
-2. Isi WiFi rumah (2,4 GHz), URL server, kunci API > **Kirim ke alat**. ID alat terisi otomatis.
-3. Pilih mode **Cloud** > Hubungkan.
+## 5. Setup pertama (hampir semua otomatis)
+1. **Server:** isi `API_KEY` dan `PUBLIC_URL`, jalankan. Salin baris **Kode sambung** dari log server.
+2. **Aplikasi:** buka. Kode di clipboard terdeteksi otomatis ("Pakai kode?"), URL dan kunci terisi sendiri. (Atau Setelan > Tempel kode sambung.)
+3. **Pasang alat baru** (Beranda atau Setelan): nyalakan alat, sambungkan HP ke WiFi `AkarSiaga-XXXX` (sandi bisa disalin dari layar), alat terdeteksi sendiri,
+   isi **nama dan sandi WiFi rumah**, tekan *Hubungkan alat*. Aplikasi menunggu dan terhubung sendiri, ID alat terisi otomatis.
+Berikutnya aplikasi langsung tersambung saat dibuka.
+
+## Mode uji (alat belum jadi)
+Set `SIMULATOR=1` di server. Alat virtual **AkarSiaga-DEMO** akan muncul dan dipilih otomatis bila belum ada alat asli.
+Memakai jalur yang sama dengan alat asli (kejadian, push, riwayat, AI). Di Setelan > Pengaturan lanjutan > *Uji (simulator)* ada tombol
+pemicu: tanah kering, air habis, selang bocor, alat offline, dst. Matikan di Setelan (*Pakai alat uji*) atau hapus `SIMULATOR` setelah alat asli siap.
 
 ## Asisten AI
 Beranda > **Asisten AI**: tanya jawab (konteks otomatis: kelembaban, suhu, riwayat 24 jam, pengaturan), saran pengaturan
@@ -84,7 +92,7 @@ dan pompa tetap dikendalikan aturan + pengaman di alat.
 
 ## Pengujian
 ```
-cd server && node test/smoke.js          # 33 uji: Firebase (JWT RSA), Gemini, kuota, validasi
+cd server && node test/smoke.js          # 55 uji: Firebase (JWT RSA), Gemini, kuota, simulator, validasi
 python3 scripts/test_patch_android.py    # 20 uji: patch gradle Kotlin DSL & Groovy
 ```
 Belum teruji di lingkungan pengembangan ini: kompilasi Dart/Flutter, firmware di ESP32, panel Pterodactyl dan Firebase/Gemini sungguhan.

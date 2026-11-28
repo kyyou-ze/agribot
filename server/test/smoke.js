@@ -155,6 +155,69 @@ const listen = handler => new Promise(res => {
   ok(n1.status === 503 && /belum diaktifkan/.test(n1.json.error), 'tanpa GEMINI_API_KEY: chat = 503 dengan pesan jelas');
   ok((await call('GET', '/api/ai/status', { port: P2 })).json.enabled === false, 'status AI = nonaktif');
   ok(log2.includes('Push Firebase : mati'), 'tanpa service account: Firebase tercatat mati (server tetap jalan)');
+
+  // --- daftar alat di server utama (alat asli, bukan simulator) ---
+  console.log('== daftar alat ==');
+  const dl = await call('GET', '/api/app/devices');
+  ok(dl.status === 200 && dl.json.some(d => d.id === ID && d.sim === false), 'daftar alat memuat alat asli (sim=false)');
+  ok((await call('POST', '/api/sim/scenario?name=dry')).status === 404, 'skenario ditolak (404) saat simulator tidak aktif');
+
+  // --- server ketiga: MODE UJI (simulator) ---
+  console.log('== mode uji (simulator) ==');
+  const free3 = await listen(() => {}); const P3 = free3.port; free3.s.close();
+  const p3 = spawn(process.execPath, [path.join(__dirname, '..', 'server.js')], { env: { ...env, SERVER_PORT: String(P3), SIMULATOR: '1', SIM_SPEED: '60', SIM_TICK_MS: '150', OFFLINE_AFTER_S: '2', INEFFECTIVE_CHECK_S: '2', PUBLIC_URL: 'http://x.test', DATA_FILE: path.join(tmp, 'd3.json') } });
+  let log3 = ''; p3.stdout.on('data', d => (log3 += d)); p3.stderr.on('data', d => (log3 += d));
+  for (let i = 0; i < 50 && !log3.includes('berjalan'); i++) await sleep(100);
+  const until = async (fn, ms = 9000) => { const t0 = Date.now(); while (Date.now() - t0 < ms) { try { const v = await fn(); if (v) return v; } catch {} await sleep(120); } return null; };
+  const C3 = (m, pth, o = {}) => call(m, pth, { port: P3, ...o });
+  const DEMO = 'AkarSiaga-DEMO';
+  const st3 = async () => { const r = await C3('GET', `/api/app/state?id=${DEMO}`); return r.status === 200 ? r.text.split('\n') : null; };
+  const field = async i => { const l = await st3(); return l ? l[1].split(',')[i] : null; };
+  const cfgOf = async k => { const l = await st3(); const c = l && l.find(x => x.startsWith('C:')); const m = c && new RegExp(k + '=([^;]*)').exec(c); return m ? m[1] : null; };
+  const events = async () => (await C3('GET', `/api/app/history?id=${DEMO}&hours=1`)).json.e.map(e => e[1]);
+  const cmd = c => C3('POST', `/api/app/cmd?id=${DEMO}`, { body: c });
+  const scen = (n, q = '') => C3('POST', `/api/sim/scenario?name=${n}${q}`);
+
+  ok(log3.includes('Mode uji      : AKTIF'), 'log startup: mode uji AKTIF');
+  const code = (/Kode sambung  : (AKS1\.\S+)/.exec(log3) || [])[1];
+  let pair = null; try { pair = JSON.parse(Buffer.from(code.slice(5), 'base64url').toString()); } catch {}
+  ok(pair && pair.u === 'http://x.test' && pair.k === KEY, 'kode sambung AKS1.* berisi URL & kunci (bisa didekode aplikasi)');
+  ok((await C3('GET', '/api/sim/status')).json.enabled === true, 'status simulator = aktif');
+  ok(await until(async () => (await C3('GET', '/api/app/devices')).json.find(d => d.id === DEMO && d.sim && d.name === 'Akar Siaga (uji)')), 'alat virtual muncul di daftar alat (sim=true, bernama)');
+  const first = await st3();
+  ok(first && first[0].startsWith('O:1,') && first[1].split(',').length === 15 && first.filter(l => l.startsWith('S:')).length === 4 && first.some(l => l.startsWith('C:id=' + DEMO)), 'state: online, 15 kolom status, 4 jadwal, baris C dengan ID');
+  await C3('POST', `/api/app/push?id=${DEMO}`, { body: JSON.stringify({ token: 'tok-sim-0000001' }) });
+
+  await cmd('M:M'); await cmd('P:1');
+  ok(await until(async () => (await field(5)) === '1'), 'perintah P:1 (siram manual) -> pompa menyala');
+  await cmd('P:0');
+  ok(await until(async () => (await field(5)) === '0'), 'perintah P:0 -> pompa mati');
+  await cmd('C:flow=50');
+  ok(await until(async () => (await cfgOf('flow')) === '50'), 'perintah C:flow=50 tercermin di baris pengaturan');
+  await cmd('T:55,1,10');
+  ok(await until(async () => (await field(8)) === '1'), 'perintah T: mengubah lama siram jadi 1 dtk');
+
+  await cmd('M:A'); await scen('dry');
+  ok(await until(async () => (await events()).includes('Penyiraman selesai')), 'skenario "dry" + otomatis -> siram -> kejadian "Penyiraman selesai"');
+  ok(await until(() => fcm.some(x => x.token === 'tok-sim-0000001' && x.title === 'Penyiraman selesai')), 'push "Penyiraman selesai" terkirim dari alat virtual');
+
+  await scen('tank_empty');
+  ok(await until(async () => (await field(4)) === '0'), 'skenario tank_empty -> kolom air = 0');
+  ok(await until(() => fcm.some(x => x.token === 'tok-sim-0000001' && x.title === 'Tangki air habis')), 'push "Tangki air habis" terkirim');
+  await scen('refill');
+  ok(await until(async () => (await events()).includes('Tangki terisi kembali')), 'skenario refill -> kejadian "Tangki terisi kembali"');
+
+  await scen('ineffective');
+  ok(await until(async () => (await events()).includes('Penyiraman kurang efektif'), 14000), 'skenario ineffective -> terdeteksi "Penyiraman kurang efektif"');
+
+  await scen('offline', '&secs=5');
+  ok(await until(async () => (await events()).includes('Alat offline'), 12000), 'skenario offline -> kejadian "Alat offline"');
+  ok(await until(() => fcm.some(x => x.token === 'tok-sim-0000001' && x.title === 'Alat offline')), 'push "Alat offline" terkirim');
+  ok(await until(async () => (await events()).includes('Alat online kembali'), 12000), 'setelah pulih -> "Alat online kembali"');
+  ok((await scen('tidak_ada')).status === 400, 'skenario tidak dikenal = 400');
+  ok((await C3('GET', `/api/app/state?id=${DEMO}`, { key: 'salah' })).status === 401, 'simulator tetap dilindungi kunci API');
+  await Promise.all([new Promise(r => { p3.once('exit', r); p3.kill(); })]);
+
   const stop = p => new Promise(r => { p.once('exit', r); p.kill(); });
   await Promise.all([stop(p2), stop(proc)]);
   for (const x of [O, F, G]) x.s.close();

@@ -22,4 +22,13 @@ module.exports = {
   GEMINI_MODEL: env('GEMINI_MODEL', 'gemini-flash-latest'),
   GEMINI_BASE: env('GEMINI_BASE', 'https://generativelanguage.googleapis.com').replace(/\/+$/, ''),
   AI_DAILY_LIMIT: +env('AI_DAILY_LIMIT', '30') || 30,
+  // kemudahan setup: URL publik server -> dipakai membuat "kode sambung" otomatis untuk aplikasi
+  PUBLIC_URL: env('PUBLIC_URL').replace(/\/+$/, ''),
+  // mode uji: alat virtual (simulator) saat alat asli belum jadi
+  SIMULATOR: ['1', 'true', 'yes', 'ya'].includes(env('SIMULATOR').toLowerCase()),
+  SIM_SPEED: +env('SIM_SPEED', '6') || 6,          // pengali kecepatan tanah mengering
+  SIM_TICK_MS: +env('SIM_TICK_MS', '2000') || 2000, // seberapa sering alat virtual "sinkron"
+  // ambang deteksi
+  OFFLINE_AFTER_S: +env('OFFLINE_AFTER_S', '90') || 90,
+  INEFFECTIVE_CHECK_S: +env('INEFFECTIVE_CHECK_S', '60') || 60,
 };

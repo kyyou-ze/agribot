@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
+import 'home.dart';
 import 'push/push_service.dart';
 import 'state.dart';
+import 'theme.dart';
 import 'widgets.dart';
-
-const _pad = EdgeInsets.fromLTRB(16, 12, 16, 24);
 
 class _SliderSet extends StatefulWidget {
   final String title, unit;
@@ -81,22 +81,20 @@ class SettingsPage extends StatefulWidget {
 }
 
 class _SettingsPageState extends State<SettingsPage> {
-  late final TextEditingController _ssid, _pass, _url, _key, _id, _host, _name, _apw, _ntfy, _tg;
+  late final TextEditingController _url, _key, _id, _name, _apw, _ntfy, _tg;
+  AppState get s => widget.s;
 
   @override
   void initState() {
     super.initState();
-    final s = widget.s;
-    _ssid = TextEditingController(text: s.ssid);
-    _pass = TextEditingController(text: s.pass);
     _url = TextEditingController(text: s.serverUrl);
     _key = TextEditingController(text: s.apiKey);
     _id = TextEditingController(text: s.devId);
-    _host = TextEditingController(text: s.host);
     _name = TextEditingController(text: s.cfgStr('name', 'Akar Siaga'));
     _apw = TextEditingController();
     _ntfy = TextEditingController(text: s.ntfy);
     _tg = TextEditingController(text: s.tg);
+    s.loadSim();
     s.loadServerNotify().then((_) {
       if (mounted) {
         _ntfy.text = s.ntfy;
@@ -107,15 +105,18 @@ class _SettingsPageState extends State<SettingsPage> {
 
   @override
   void dispose() {
-    for (final c in [_ssid, _pass, _url, _key, _id, _host, _name, _apw, _ntfy, _tg]) {
+    for (final c in [_url, _key, _id, _name, _apw, _ntfy, _tg]) {
       c.dispose();
     }
     super.dispose();
   }
 
   void _snack(String m) => ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(m)));
-
-  void _saveNet() => widget.s.saveNet(_ssid.text.trim(), _pass.text, _url.text.trim(), _key.text.trim(), _id.text.trim(), _host.text.trim());
+  void _syncFields() {
+    _url.text = s.serverUrl;
+    _key.text = s.apiKey;
+    _id.text = s.devId;
+  }
 
   Future<bool> _ask(String title, String msg) async =>
       await showDialog<bool>(
@@ -131,32 +132,19 @@ class _SettingsPageState extends State<SettingsPage> {
       ) ??
       false;
 
-  Widget _mode(Net n, String sub) {
-    final s = widget.s, cs = Theme.of(context).colorScheme;
-    final sel = s.net == n;
-    return Panel(
-      onTap: () => s.setNet(n),
-      border: sel ? cs.primary : null,
-      color: sel ? cs.primaryContainer.withValues(alpha: .4) : null,
-      child: Row(children: [
-        Icon(netIcon(n), size: 28),
-        const SizedBox(width: 14),
-        Expanded(
-          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text(netNames[n]!, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 16)),
-            Text(sub, style: Theme.of(context).textTheme.bodySmall),
-          ]),
-        ),
-        if (sel) Icon(Icons.check_circle, color: cs.primary),
-      ]),
-    );
-  }
+  Widget _sub(BuildContext c, String t) => Padding(
+        padding: const EdgeInsets.only(top: 14, bottom: 6),
+        child: Text(t, style: Theme.of(c).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w800, color: Theme.of(c).colorScheme.primary)),
+      );
 
-  Widget _row(TextEditingController c, String label, String btn, VoidCallback onTap, {bool obscure = false, bool enabled = true}) =>
+  Widget _sw(String title, bool v, ValueChanged<bool>? f) =>
+      SwitchListTile(contentPadding: EdgeInsets.zero, title: Text(title), value: v, onChanged: f);
+
+  Widget _row(BuildContext c, TextEditingController ctl, String label, String btn, VoidCallback onTap, {bool obscure = false, bool enabled = true}) =>
       Padding(
         padding: const EdgeInsets.only(bottom: 10),
         child: Row(children: [
-          Expanded(child: TextField(controller: c, obscureText: obscure, decoration: InputDecoration(labelText: label))),
+          Expanded(child: TextField(controller: ctl, obscureText: obscure, decoration: dec(c, label: label))),
           const SizedBox(width: 8),
           FilledButton.tonal(onPressed: enabled ? onTap : null, child: Text(btn)),
         ]),
@@ -164,344 +152,371 @@ class _SettingsPageState extends State<SettingsPage> {
 
   @override
   Widget build(BuildContext c) {
-    final s = widget.s, cs = Theme.of(c).colorScheme, tt = Theme.of(c).textTheme;
+    final cs = Theme.of(c).colorScheme, tt = Theme.of(c).textTheme;
     final en = s.connected;
     String hh(int v) => '${two(v)}:00';
-    return ListView(padding: _pad, children: [
-      // ===================== KONEKSI =====================
-      heading(c, 'Koneksi HP ke alat'),
-      _mode(Net.ap, 'Alat membuat WiFi sendiri (AkarSiaga-XXXX, sandi akarsiaga123). Tanpa router & internet.'),
-      _mode(Net.sta, 'Alat dan HP di WiFi yang sama (router/hotspot HP lain).'),
-      _mode(Net.cloud, 'Lewat internet dari mana saja, via server kamu. Notifikasi push & riwayat 24 jam.'),
-      if (s.net == Net.ap)
-        Panel(
-          color: cs.tertiaryContainer.withValues(alpha: .5),
-          child: const Text('Sambungkan HP ke WiFi "AkarSiaga-XXXX", pilih "tetap terhubung" bila diminta, matikan data seluler, lalu tekan Hubungkan.'),
-        ),
-      Panel(
-        child: Row(children: [
-          Expanded(child: Text(s.status, style: tt.bodyMedium)),
-          const SizedBox(width: 8),
-          s.connected
-              ? OutlinedButton(onPressed: s.disconnect, child: const Text('Putus'))
-              : FilledButton(onPressed: s.busy ? null : s.connect, child: const Text('Hubungkan')),
-        ]),
-      ),
-      heading(c, 'Jaringan & server'),
-      Panel(
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text('Isi lalu simpan. Mode Cloud memakai URL, kunci, dan ID di bawah.', style: tt.bodySmall),
-          const SizedBox(height: 10),
-          TextField(controller: _ssid, decoration: const InputDecoration(labelText: 'Nama WiFi (SSID) - 2,4 GHz')),
-          const SizedBox(height: 10),
-          TextField(controller: _pass, obscureText: true, decoration: const InputDecoration(labelText: 'Sandi WiFi')),
-          const SizedBox(height: 10),
-          TextField(
-            controller: _url,
-            keyboardType: TextInputType.url,
-            decoration: const InputDecoration(labelText: 'URL server (opsional)', hintText: 'https://akarsiaga.domainmu.com'),
-          ),
-          const SizedBox(height: 10),
-          TextField(controller: _key, obscureText: true, decoration: const InputDecoration(labelText: 'Kunci API server')),
-          const SizedBox(height: 10),
-          TextField(controller: _id, decoration: const InputDecoration(labelText: 'ID alat', hintText: 'terisi otomatis saat terhubung langsung')),
-          const SizedBox(height: 10),
-          TextField(controller: _host, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'IP alat manual (opsional, mode Router)')),
-          const SizedBox(height: 12),
-          Row(children: [
-            Expanded(
-              child: OutlinedButton(
-                onPressed: () {
-                  _saveNet();
-                  _snack('Tersimpan di aplikasi');
-                },
-                child: const Text('Simpan'),
-              ),
-            ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: FilledButton(
-                onPressed: en
-                    ? () async {
-                        _saveNet();
-                        if (s.ssid.isEmpty) {
-                          _snack('Isi nama WiFi (SSID) dulu');
-                          return;
-                        }
-                        if (await _ask('Kirim ke alat?', 'Alat akan restart dan masuk ke WiFi "${s.ssid}"${s.serverReady ? ' dengan sinkron ke server' : ''}.')) {
-                          await s.provision();
-                        }
-                      }
-                    : null,
-                child: const Text('Kirim ke alat'),
-              ),
-            ),
-          ]),
-          if (en && s.devNet == 'S')
-            Align(
-              alignment: Alignment.centerRight,
-              child: TextButton(
-                onPressed: () async {
-                  if (await _ask('Kembali ke Hotspot?', 'Alat akan restart dan membuat WiFi sendiri.')) await s.toHotspot();
-                },
-                child: const Text('Kembalikan alat ke Hotspot'),
-              ),
-            ),
-          if (!en) Text('Tombol "Kirim ke alat" aktif setelah HP terhubung ke alat.', style: tt.bodySmall),
-          Text('Cadangan: tahan tombol di alat >3 detik untuk ganti Hotspot <-> Router (1 bip = Hotspot, 2 = Router).', style: tt.bodySmall),
-        ]),
-      ),
+    final modeHelp = {
+      ConnMode.auto: 'Mencoba Wi-Fi (satu jaringan) lebih dulu, lalu otomatis pindah ke Cloud.',
+      ConnMode.lan: 'Hanya lewat WiFi yang sama dengan alat. Tanpa internet.',
+      ConnMode.cloud: 'Lewat internet dari mana saja, memakai server kamu.',
+    }[s.mode]!;
 
-      // ===================== PENYIRAMAN =====================
-      heading(c, 'Penyiraman'),
-      if (!en) Text('Hubungkan ke alat untuk mengubah pengaturan di bawah.', style: tt.bodySmall),
-      Panel(
-        child: Column(children: [
-          _SliderSet(
-            title: 'Maks. penyiraman manual', unit: ' dtk', value: s.cfgInt('manrun', 30), min: 5, max: 60, enabled: en,
-            help: 'Pompa mati otomatis setelah waktu ini bila lupa dimatikan.',
-            onSave: (v) => s.setCfg('manrun', '$v'),
-          ),
-          _SliderSet(
-            title: 'Batas siram otomatis per hari', value: s.cfgInt('maxday', 0), min: 0, max: 30, enabled: en,
-            fmt: (v) => v == 0 ? 'Tanpa batas' : '$v kali',
-            help: 'Mencegah tanaman kebanjiran bila sensor error.',
-            onSave: (v) => s.setCfg('maxday', '$v'),
-          ),
-          _SliderSet(
-            title: 'Lewati jadwal jika tanah ≥', unit: '%', value: s.cfgInt('skip', 85), min: 40, max: 100, enabled: en,
-            onSave: (v) => s.setCfg('skip', '$v'),
-          ),
-          _SliderSet(
-            title: 'Debit pompa', unit: ' ml/dtk', value: s.cfgInt('flow', 30), min: 1, max: 100, enabled: en,
-            help: 'Ukur: pompa 10 detik ke gelas ukur, bagi 10. Untuk estimasi pemakaian air.',
-            onSave: (v) => s.setCfg('flow', '$v'),
-          ),
-          _SliderSet(
-            title: 'Smart panas: aktif saat suhu ≥', value: s.cfgInt('hT', 0), min: 0, max: 45, enabled: en,
-            fmt: (v) => v == 0 ? 'Mati' : '$v°C',
-            help: 'Saat panas, tanah cepat kering, jadi batas siram dinaikkan.',
-            onSave: (v) => s.setCfg('hT', '$v'),
-          ),
-          _SliderSet(
-            title: 'Tambahan batas siram saat panas', unit: '%', value: s.cfgInt('hB', 10), min: 0, max: 30, enabled: en,
-            onSave: (v) => s.setCfg('hB', '$v'),
-          ),
-          if (en) Align(alignment: Alignment.centerLeft, child: Text('Batas siram efektif sekarang: ${s.effMin}%', style: tt.bodySmall)),
-        ]),
-      ),
-
-      // ===================== ALARM & SENSOR =====================
-      heading(c, 'Alarm & sensor'),
-      Panel(
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          SwitchListTile(
-            contentPadding: EdgeInsets.zero,
-            title: const Text('Buzzer alat'),
-            value: s.cfgInt('buzz', 1) == 1,
-            onChanged: en ? (v) => s.setCfg('buzz', v ? '1' : '0') : null,
-          ),
-          _SliderSet(
-            title: 'Buzzer diam mulai jam', value: s.cfgInt('qs', 22), min: 0, max: 23, enabled: en, fmt: hh,
-            onSave: (v) => s.setCfg('qs', '$v'),
-          ),
-          _SliderSet(
-            title: 'Buzzer aktif lagi jam', value: s.cfgInt('qe', 6), min: 0, max: 23, enabled: en, fmt: hh,
-            help: 'Jam mulai = jam aktif lagi berarti jam tenang dimatikan. Butuh jam alat sinkron.',
-            onSave: (v) => s.setCfg('qe', '$v'),
-          ),
-          const Text('Float switch'),
-          const SizedBox(height: 6),
-          SegmentedButton<int>(
-            segments: const [
-              ButtonSegment(value: 0, label: Text('Normal')),
-              ButtonSegment(value: 1, label: Text('Terbalik')),
-            ],
-            selected: {s.cfgInt('fpol', 0)},
-            onSelectionChanged: en ? (v) => s.setCfg('fpol', '${v.first}') : null,
-          ),
-          Padding(
-            padding: const EdgeInsets.only(top: 4, bottom: 12),
-            child: Text('Pilih "Terbalik" bila air ada tapi terbaca habis.', style: tt.bodySmall),
-          ),
-          const Text('Sensor suhu'),
-          const SizedBox(height: 6),
-          SegmentedButton<int>(
-            segments: const [ButtonSegment(value: 11, label: Text('DHT11')), ButtonSegment(value: 22, label: Text('DHT22'))],
-            selected: {s.cfgInt('dht', 11)},
-            onSelectionChanged: en ? (v) => s.setCfg('dht', '${v.first}') : null,
-          ),
-          Padding(
-            padding: const EdgeInsets.only(top: 4, bottom: 12),
-            child: Text('Berlaku setelah alat di-restart.', style: tt.bodySmall),
-          ),
-          const Divider(),
-          Text('Kalibrasi sensor tanah - nilai mentah: ${s.raw}', style: const TextStyle(fontWeight: FontWeight.w600)),
-          const SizedBox(height: 4),
-          Text('Sensor di udara -> KERING. Celup ke air sampai garis batas -> BASAH.', style: tt.bodySmall),
-          const SizedBox(height: 8),
-          Row(children: [
-            Expanded(child: OutlinedButton(onPressed: en ? () => s.calibrate(true) : null, child: const Text('Set KERING'))),
-            const SizedBox(width: 8),
-            Expanded(child: OutlinedButton(onPressed: en ? () => s.calibrate(false) : null, child: const Text('Set BASAH'))),
-          ]),
-        ]),
-      ),
-
-      // ===================== NOTIFIKASI =====================
-      heading(c, 'Notifikasi di HP'),
-      Panel(
-        padding: EdgeInsets.zero,
-        child: Column(children: [
-          SwitchListTile(title: const Text('Tangki air habis'), value: s.nWater, onChanged: (v) => s.setNotif(w: v)),
-          SwitchListTile(title: const Text('Penyiraman selesai'), value: s.nPump, onChanged: (v) => s.setNotif(p: v)),
-          SwitchListTile(title: const Text('Tanah kering (mode manual)'), value: s.nDry, onChanged: (v) => s.setNotif(d: v)),
-          SwitchListTile(title: const Text('Koneksi terputus'), value: s.nConn, onChanged: (v) => s.setNotif(c: v)),
-        ]),
-      ),
-      Text('Muncul selama aplikasi masih berjalan. Untuk notifikasi saat aplikasi ditutup, pakai push dari server di bawah.', style: tt.bodySmall),
-      heading(c, 'Notifikasi push dari server'),
-      Panel(
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text('Real-time walau aplikasi ditutup. Butuh server (URL, kunci, ID alat terisi). Pilih salah satu atau keduanya:', style: tt.bodySmall),
-          const SizedBox(height: 8),
-          Row(children: [
-            Icon(pushAvailable ? Icons.check_circle : Icons.info_outline, size: 18, color: pushAvailable ? Colors.green : cs.outline),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Text(
-                pushAvailable ? 'Firebase aktif di build ini: push masuk langsung ke aplikasi.' : 'Build ini tanpa Firebase. Pakai ntfy atau Telegram di bawah.',
-                style: tt.bodySmall,
-              ),
-            ),
-          ]),
-          if (pushAvailable)
-            SwitchListTile(
-              contentPadding: EdgeInsets.zero,
-              title: const Text('Terima push di HP ini'),
-              value: s.pushOn,
-              onChanged: (v) async {
-                final m = await s.registerPush(enable: v);
-                if (mounted) _snack(m);
-              },
-            ),
-          const SizedBox(height: 10),
-          TextField(
-            controller: _ntfy,
-            decoration: const InputDecoration(labelText: 'Topik ntfy', helperText: 'Pasang app "ntfy", lalu subscribe topik ini. Pakai nama yang sulit ditebak.'),
-            onChanged: (v) => s.ntfy = v,
-          ),
-          const SizedBox(height: 10),
-          TextField(
-            controller: _tg,
-            keyboardType: TextInputType.number,
-            decoration: const InputDecoration(labelText: 'Chat ID Telegram', helperText: 'Kirim /start ke bot server dulu. Cek ID lewat @userinfobot.'),
-            onChanged: (v) => s.tg = v,
-          ),
-          SwitchListTile(contentPadding: EdgeInsets.zero, title: const Text('Tangki air habis'), value: s.sw, onChanged: (v) => setState(() => s.sw = v)),
-          SwitchListTile(contentPadding: EdgeInsets.zero, title: const Text('Penyiraman selesai'), value: s.sp, onChanged: (v) => setState(() => s.sp = v)),
-          SwitchListTile(contentPadding: EdgeInsets.zero, title: const Text('Tanah kering & penyiraman kurang efektif'), value: s.sd, onChanged: (v) => setState(() => s.sd = v)),
-          SwitchListTile(contentPadding: EdgeInsets.zero, title: const Text('Alat offline / online kembali'), value: s.so, onChanged: (v) => setState(() => s.so = v)),
-          Row(children: [
-            Expanded(
-              child: FilledButton(
-                onPressed: () async {
-                  s.ntfy = _ntfy.text;
-                  s.tg = _tg.text;
-                  final m = await s.saveServerNotify();
-                  if (mounted) _snack(m);
-                },
-                child: const Text('Simpan ke server'),
-              ),
-            ),
-            const SizedBox(width: 8),
-            OutlinedButton(
-              onPressed: () async {
-                final m = await s.testServerNotify();
-                if (mounted) _snack(m);
-              },
-              child: const Text('Kirim tes'),
-            ),
-          ]),
-        ]),
+    return ListView(padding: const EdgeInsets.fromLTRB(16, 8, 16, 28), children: [
+      Padding(
+        padding: const EdgeInsets.fromLTRB(6, 4, 6, 4),
+        child: Text('Setelan', style: tt.headlineSmall?.copyWith(fontWeight: FontWeight.w800, letterSpacing: -.5)),
       ),
 
       // ===================== ALAT =====================
       heading(c, 'Alat'),
       Panel(
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          _row(_name, 'Nama alat', 'Simpan', () {
-            s.setCfg('name', _name.text.trim());
-            _snack('Nama disimpan');
-          }, enabled: en),
-          _row(_apw, 'Sandi Hotspot baru (min. 8 karakter)', 'Simpan', () {
-            if (_apw.text.length < 8) {
-              _snack('Sandi minimal 8 karakter');
-              return;
-            }
-            s.setCfg('apw', _apw.text);
-            _apw.clear();
-            _snack('Sandi Hotspot baru berlaku setelah alat restart');
-          }, obscure: true, enabled: en),
-          if (en) Text('ID alat: ${s.cfgStr('id', '-')}', style: tt.bodySmall),
-          const SizedBox(height: 8),
+          Row(children: [
+            Container(
+              width: 48,
+              height: 48,
+              decoration: BoxDecoration(color: cs.primaryContainer, borderRadius: BorderRadius.circular(16)),
+              child: Icon(Icons.eco, color: cs.onPrimaryContainer),
+            ),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text(s.usingSim ? 'Alat uji (simulator)' : s.cfgStr('name', 'Akar Siaga'), style: tt.titleMedium?.copyWith(fontWeight: FontWeight.w700)),
+                Text(
+                  s.connected ? (s.online ? 'Online via ${netNames[s.via]}' : 'Alat offline') : s.status,
+                  style: tt.bodySmall?.copyWith(color: cs.onSurfaceVariant),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ]),
+            ),
+          ]),
+          const SizedBox(height: 14),
           Row(children: [
             Expanded(
-              child: OutlinedButton.icon(
-                onPressed: en
-                    ? () async {
-                        if (await _ask('Restart alat?', 'Alat restart dan koneksi terputus sebentar.')) await s.restartDevice();
-                      }
-                    : null,
-                icon: const Icon(Icons.restart_alt),
-                label: const Text('Restart'),
-              ),
+              child: s.connected
+                  ? OutlinedButton(onPressed: s.disconnect, child: const Text('Putus'))
+                  : FilledButton(onPressed: s.busy ? null : s.connect, child: const Text('Hubungkan')),
             ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: OutlinedButton.icon(
-                style: OutlinedButton.styleFrom(foregroundColor: cs.error),
-                onPressed: en
-                    ? () async {
-                        if (await _ask('Reset pengaturan alat?', 'Semua pengaturan, jadwal, WiFi, dan server di alat dihapus. Alat kembali ke mode Hotspot.')) {
-                          await s.resetDevice();
-                        }
-                      }
-                    : null,
-                icon: const Icon(Icons.delete_forever),
-                label: const Text('Reset'),
-              ),
-            ),
+            const SizedBox(width: 10),
+            Expanded(child: FilledButton.tonal(onPressed: () => openSetup(c, s), child: const Text('Pasang alat baru'))),
           ]),
         ]),
       ),
 
-      // ===================== APLIKASI =====================
-      heading(c, 'Aplikasi'),
+      // ===================== KONEKSI =====================
+      heading(c, 'Koneksi'),
       Panel(
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          const Text('Tema'),
-          const SizedBox(height: 6),
-          SegmentedButton<int>(
-            segments: const [
-              ButtonSegment(value: 0, label: Text('Sistem')),
-              ButtonSegment(value: 1, label: Text('Terang')),
-              ButtonSegment(value: 2, label: Text('Gelap')),
-            ],
-            selected: {s.themeIdx},
-            onSelectionChanged: (v) => s.setTheme(v.first),
+          SizedBox(
+            width: double.infinity,
+            child: SegmentedButton<ConnMode>(
+              showSelectedIcon: false,
+              segments: [for (final m in ConnMode.values) ButtonSegment(value: m, label: Text(modeNames[m]!))],
+              selected: {s.mode},
+              onSelectionChanged: (v) => s.setMode(v.first),
+            ),
           ),
-          const SizedBox(height: 12),
-          OutlinedButton.icon(
-            onPressed: () async {
-              if (await _ask('Hapus riwayat?', 'Grafik dan daftar kejadian di HP dihapus.')) s.clearHistory();
-            },
-            icon: const Icon(Icons.history_toggle_off),
-            label: const Text('Hapus riwayat di HP'),
+          const SizedBox(height: 8),
+          Text(modeHelp, style: tt.bodySmall?.copyWith(color: cs.onSurfaceVariant)),
+          const Divider(height: 28),
+          Row(children: [
+            Icon(s.serverReady ? Icons.cloud_done_outlined : Icons.cloud_off_outlined, color: s.serverReady ? cs.primary : cs.outline),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                s.serverReady
+                    ? 'Server: ${s.serverHost}\n${s.devId.isEmpty ? 'Alat belum dipilih' : 'Alat: ${s.devId}'}'
+                    : 'Server belum diatur. Dibutuhkan untuk Cloud dan notifikasi.',
+              ),
+            ),
+          ]),
+          const SizedBox(height: 10),
+          Row(children: [
+            Expanded(
+              child: FilledButton.tonal(
+                onPressed: () async {
+                  final m = await s.pasteCode();
+                  if (mounted) {
+                    setState(_syncFields);
+                    _snack(m);
+                  }
+                },
+                child: const Text('Tempel kode sambung'),
+              ),
+            ),
+            if (s.serverReady) ...[
+              const SizedBox(width: 8),
+              TextButton(
+                onPressed: () async {
+                  final m = await s.autoSelectDevice();
+                  if (mounted) {
+                    setState(_syncFields);
+                    _snack(m ?? 'Alat dipilih otomatis: ${s.devId}');
+                  }
+                },
+                child: const Text('Cari alat'),
+              ),
+            ],
+          ]),
+          Padding(
+            padding: const EdgeInsets.only(top: 6),
+            child: Text('Salin baris "Kode sambung" dari log server, lalu tekan Tempel. URL & kunci terisi sendiri.', style: tt.bodySmall?.copyWith(color: cs.onSurfaceVariant)),
+          ),
+          if (s.simEnabled) ...[
+            const Divider(height: 24),
+            _sw('Pakai alat uji (simulator)', s.usingSim, (v) async {
+              final m = await s.setUseSim(v);
+              if (m != null && mounted) _snack(m);
+            }),
+            Text('Alat virtual di server untuk mencoba semua fitur sebelum alat asli jadi.', style: tt.bodySmall?.copyWith(color: cs.onSurfaceVariant)),
+          ],
+        ]),
+      ),
+
+      // ===================== NOTIFIKASI =====================
+      heading(c, 'Notifikasi'),
+      Panel(
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          _sw('Tangki air habis', s.nWater, (v) => s.setNotif(w: v)),
+          _sw('Penyiraman selesai', s.nPump, (v) => s.setNotif(p: v)),
+          _sw('Tanah kering / penyiraman kurang efektif', s.nDry, (v) => s.setNotif(d: v)),
+          _sw('Alat offline / koneksi terputus', s.nConn, (v) => s.setNotif(c: v)),
+          const Divider(height: 24),
+          if (pushAvailable)
+            _sw('Terima push di HP ini (walau aplikasi ditutup)', s.pushOn, (v) async {
+              final m = await s.registerPush(enable: v);
+              if (mounted) _snack(m);
+            })
+          else
+            Row(children: [
+              Icon(Icons.info_outline, size: 18, color: cs.outline),
+              const SizedBox(width: 8),
+              Expanded(child: Text('Push saat aplikasi ditutup butuh Firebase (belum aktif di build ini).', style: tt.bodySmall)),
+            ]),
+          const SizedBox(height: 8),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: OutlinedButton.icon(
+              icon: const Icon(Icons.notifications_active_outlined, size: 18),
+              label: const Text('Kirim tes'),
+              onPressed: () async {
+                final m = await s.testServerNotify();
+                if (mounted) _snack(m);
+              },
+            ),
           ),
         ]),
       ),
-      Center(child: Text('Akar Siaga v4.0 - Persimanu 2 Jawa Tengah', style: tt.bodySmall)),
+
+      // ===================== TAMPILAN =====================
+      heading(c, 'Tampilan'),
+      Panel(
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text('Warna', style: tt.titleSmall),
+          const SizedBox(height: 8),
+          Wrap(spacing: 8, runSpacing: 8, children: [
+            for (var i = 0; i < palettes.length; i++)
+              ChoiceChip(
+                avatar: CircleAvatar(backgroundColor: palettes[i].seed, radius: 8),
+                label: Text(palettes[i].name),
+                selected: s.paletteIdx == i,
+                onSelected: (_) => s.setPalette(i),
+              ),
+          ]),
+          const SizedBox(height: 16),
+          Text('Mode', style: tt.titleSmall),
+          const SizedBox(height: 8),
+          SizedBox(
+            width: double.infinity,
+            child: SegmentedButton<int>(
+              showSelectedIcon: false,
+              segments: const [
+                ButtonSegment(value: 0, label: Text('Sistem')),
+                ButtonSegment(value: 1, label: Text('Terang')),
+                ButtonSegment(value: 2, label: Text('Gelap')),
+              ],
+              selected: {s.themeIdx},
+              onSelectionChanged: (v) => s.setTheme(v.first),
+            ),
+          ),
+        ]),
+      ),
+
+      // ===================== LANJUTAN =====================
+      Panel(
+        padding: EdgeInsets.zero,
+        child: Theme(
+          data: Theme.of(c).copyWith(dividerColor: Colors.transparent),
+          child: ExpansionTile(
+            shape: const Border(),
+            collapsedShape: const Border(),
+            tilePadding: const EdgeInsets.symmetric(horizontal: 18, vertical: 4),
+            title: const Text('Pengaturan lanjutan', style: TextStyle(fontWeight: FontWeight.w700)),
+            subtitle: const Text('Penyiraman, sensor, server manual, uji'),
+            childrenPadding: const EdgeInsets.fromLTRB(18, 0, 18, 18),
+            expandedCrossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (!en) Text('Hubungkan ke alat untuk mengubah pengaturan alat.', style: tt.bodySmall),
+              _sub(c, 'Penyiraman'),
+              _SliderSet(title: 'Maks. penyiraman manual', unit: ' dtk', value: s.cfgInt('manrun', 30), min: 5, max: 60, enabled: en, help: 'Pompa mati otomatis setelah waktu ini.', onSave: (v) => s.setCfg('manrun', '$v')),
+              _SliderSet(title: 'Batas siram otomatis per hari', value: s.cfgInt('maxday', 0), min: 0, max: 30, enabled: en, fmt: (v) => v == 0 ? 'Tanpa batas' : '$v kali', help: 'Mencegah kebanjiran bila sensor error.', onSave: (v) => s.setCfg('maxday', '$v')),
+              _SliderSet(title: 'Lewati jadwal jika tanah ≥', unit: '%', value: s.cfgInt('skip', 85), min: 40, max: 100, enabled: en, onSave: (v) => s.setCfg('skip', '$v')),
+              _SliderSet(title: 'Debit pompa', unit: ' ml/dtk', value: s.cfgInt('flow', 30), min: 1, max: 100, enabled: en, help: 'Ukur: pompa 10 detik ke gelas ukur, bagi 10.', onSave: (v) => s.setCfg('flow', '$v')),
+              _SliderSet(title: 'Smart panas: aktif saat suhu ≥', value: s.cfgInt('hT', 0), min: 0, max: 45, enabled: en, fmt: (v) => v == 0 ? 'Mati' : '$v°C', help: 'Saat panas tanah cepat kering, batas siram dinaikkan.', onSave: (v) => s.setCfg('hT', '$v')),
+              _SliderSet(title: 'Tambahan batas siram saat panas', unit: '%', value: s.cfgInt('hB', 10), min: 0, max: 30, enabled: en, onSave: (v) => s.setCfg('hB', '$v')),
+
+              _sub(c, 'Alarm & sensor'),
+              _sw('Buzzer alat', s.cfgInt('buzz', 1) == 1, en ? (v) => s.setCfg('buzz', v ? '1' : '0') : null),
+              _SliderSet(title: 'Buzzer diam mulai jam', value: s.cfgInt('qs', 22), min: 0, max: 23, enabled: en, fmt: hh, onSave: (v) => s.setCfg('qs', '$v')),
+              _SliderSet(title: 'Buzzer aktif lagi jam', value: s.cfgInt('qe', 6), min: 0, max: 23, enabled: en, fmt: hh, help: 'Jam mulai = jam aktif lagi berarti jam tenang mati.', onSave: (v) => s.setCfg('qe', '$v')),
+              const Text('Float switch'),
+              const SizedBox(height: 6),
+              SegmentedButton<int>(
+                showSelectedIcon: false,
+                segments: const [ButtonSegment(value: 0, label: Text('Normal')), ButtonSegment(value: 1, label: Text('Terbalik'))],
+                selected: {s.cfgInt('fpol', 0)},
+                onSelectionChanged: en ? (v) => s.setCfg('fpol', '${v.first}') : null,
+              ),
+              Padding(padding: const EdgeInsets.only(top: 4, bottom: 12), child: Text('Pilih "Terbalik" bila air ada tapi terbaca habis.', style: tt.bodySmall)),
+              const Text('Sensor suhu'),
+              const SizedBox(height: 6),
+              SegmentedButton<int>(
+                showSelectedIcon: false,
+                segments: const [ButtonSegment(value: 11, label: Text('DHT11')), ButtonSegment(value: 22, label: Text('DHT22'))],
+                selected: {s.cfgInt('dht', 11)},
+                onSelectionChanged: en ? (v) => s.setCfg('dht', '${v.first}') : null,
+              ),
+              Padding(padding: const EdgeInsets.only(top: 4, bottom: 12), child: Text('Berlaku setelah alat di-restart.', style: tt.bodySmall)),
+              Text('Kalibrasi sensor tanah - nilai mentah: ${s.raw}', style: const TextStyle(fontWeight: FontWeight.w600)),
+              Padding(padding: const EdgeInsets.symmetric(vertical: 4), child: Text('Sensor di udara -> KERING. Celup ke air sampai garis batas -> BASAH.', style: tt.bodySmall)),
+              Row(children: [
+                Expanded(child: OutlinedButton(onPressed: en ? () => s.calibrate(true) : null, child: const Text('Set KERING'))),
+                const SizedBox(width: 8),
+                Expanded(child: OutlinedButton(onPressed: en ? () => s.calibrate(false) : null, child: const Text('Set BASAH'))),
+              ]),
+
+              _sub(c, 'Server (manual)'),
+              TextField(controller: _url, keyboardType: TextInputType.url, decoration: dec(c, label: 'URL server', hint: 'https://akar.domainmu.com')),
+              const SizedBox(height: 8),
+              TextField(controller: _key, obscureText: true, decoration: dec(c, label: 'Kunci API')),
+              const SizedBox(height: 8),
+              TextField(controller: _id, decoration: dec(c, label: 'ID alat')),
+              const SizedBox(height: 8),
+              if (s.knownDevices.length > 1)
+                Wrap(spacing: 8, children: [
+                  for (final d in s.knownDevices)
+                    ChoiceChip(
+                      label: Text('${d.name.isEmpty ? d.id : d.name}${d.online ? '' : ' (offline)'}'),
+                      selected: s.devId == d.id,
+                      onSelected: (_) {
+                        s.setDevId(d.id);
+                        setState(_syncFields);
+                      },
+                    ),
+                ]),
+              Align(
+                alignment: Alignment.centerRight,
+                child: FilledButton.tonal(
+                  onPressed: () {
+                    s.saveNet(s.ssid, s.pass, _url.text.trim(), _key.text.trim(), _id.text.trim());
+                    _snack('Tersimpan');
+                  },
+                  child: const Text('Simpan server'),
+                ),
+              ),
+
+              _sub(c, 'Notifikasi tambahan'),
+              TextField(controller: _ntfy, decoration: dec(c, label: 'Topik ntfy', helper: 'Pasang aplikasi ntfy, subscribe topik ini. Pakai nama sulit ditebak.'), onChanged: (v) => s.ntfy = v),
+              const SizedBox(height: 8),
+              TextField(controller: _tg, keyboardType: TextInputType.number, decoration: dec(c, label: 'Chat ID Telegram', helper: 'Kirim /start ke bot server dulu.'), onChanged: (v) => s.tg = v),
+              Align(
+                alignment: Alignment.centerRight,
+                child: FilledButton.tonal(
+                  onPressed: () async {
+                    s.ntfy = _ntfy.text;
+                    s.tg = _tg.text;
+                    final m = await s.saveServerNotify();
+                    if (mounted) _snack(m);
+                  },
+                  child: const Text('Simpan'),
+                ),
+              ),
+
+              _sub(c, 'Alat'),
+              _row(c, _name, 'Nama alat', 'Simpan', () {
+                s.setCfg('name', _name.text.trim());
+                _snack('Nama disimpan');
+              }, enabled: en),
+              _row(c, _apw, 'Sandi WiFi pemasangan baru (min. 8)', 'Simpan', () {
+                if (_apw.text.length < 8) {
+                  _snack('Sandi minimal 8 karakter');
+                  return;
+                }
+                s.setCfg('apw', _apw.text);
+                _apw.clear();
+                _snack('Berlaku setelah alat restart. Catat sandi barunya!');
+              }, obscure: true, enabled: en),
+              Row(children: [
+                Expanded(
+                  child: OutlinedButton.icon(
+                    icon: const Icon(Icons.restart_alt),
+                    label: const Text('Restart'),
+                    onPressed: en ? () async { if (await _ask('Restart alat?', 'Koneksi terputus sebentar.')) await s.restartDevice(); } : null,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: OutlinedButton.icon(
+                    style: OutlinedButton.styleFrom(foregroundColor: cs.error),
+                    icon: const Icon(Icons.delete_forever),
+                    label: const Text('Reset'),
+                    onPressed: en
+                        ? () async {
+                            if (await _ask('Reset alat?', 'Semua pengaturan, jadwal, WiFi, dan server di alat dihapus. Alat kembali ke mode pemasangan.')) await s.resetDevice();
+                          }
+                        : null,
+                  ),
+                ),
+              ]),
+
+              if (s.simEnabled) ...[
+                _sub(c, 'Uji (simulator)'),
+                Text('Picu kejadian pada alat virtual untuk mencoba notifikasi, riwayat, dan AI.', style: tt.bodySmall),
+                const SizedBox(height: 8),
+                Wrap(spacing: 8, runSpacing: 4, children: [
+                  for (final e in const {
+                    'Tanah kering': 'dry',
+                    'Tanah basah': 'wet',
+                    'Air habis': 'tank_empty',
+                    'Isi tangki': 'refill',
+                    'Selang bocor': 'ineffective',
+                    'Alat offline': 'offline',
+                    'Reset': 'reset',
+                  }.entries)
+                    ActionChip(
+                      label: Text(e.key),
+                      onPressed: () async {
+                        final m = await s.simScenario(e.value);
+                        if (mounted) _snack(m);
+                      },
+                    ),
+                ]),
+              ],
+
+              _sub(c, 'Data'),
+              OutlinedButton.icon(
+                icon: const Icon(Icons.history_toggle_off),
+                label: const Text('Hapus riwayat di HP'),
+                onPressed: () async {
+                  if (await _ask('Hapus riwayat?', 'Grafik dan daftar kejadian di HP dihapus.')) s.clearHistory();
+                },
+              ),
+            ],
+          ),
+        ),
+      ),
+      Center(child: Text('Akar Siaga v5.0 - Persimanu 2 Jawa Tengah', style: tt.bodySmall)),
     ]);
   }
 }

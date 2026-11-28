@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -8,10 +9,18 @@ import 'ai.dart';
 import 'link.dart';
 import 'push/push_service.dart';
 
-enum Net { ap, sta, cloud }
+/// Jalur yang sedang dipakai.
+enum Net { lan, cloud }
 
-const netNames = {Net.ap: 'Hotspot Akar Siaga', Net.sta: 'Wi-Fi Router', Net.cloud: 'Cloud (Internet)'};
-const netCodes = {Net.ap: 'A', Net.sta: 'S', Net.cloud: 'S'};
+/// Pilihan pengguna: otomatis = coba Wi-Fi dulu, lalu Cloud.
+enum ConnMode { auto, lan, cloud }
+
+const netNames = {Net.lan: 'Wi-Fi', Net.cloud: 'Cloud'};
+const modeNames = {ConnMode.auto: 'Otomatis', ConnMode.lan: 'Wi-Fi', ConnMode.cloud: 'Cloud'};
+
+/// Alat baru / belum punya WiFi menyalakan hotspot sementara untuk pemasangan.
+const setupHost = '192.168.4.1';
+const setupPassword = 'akarsiaga123';
 
 class Preset {
   final String name, emoji, tip;
@@ -51,6 +60,13 @@ class Ev {
   Ev(this.t, this.text, this.kind);
 }
 
+/// Alat yang dikenal server.
+class DevInfo {
+  final String id, name;
+  final bool online, sim;
+  DevInfo(this.id, this.name, this.online, this.sim);
+}
+
 int _i(String s, int d) => int.tryParse(s.trim()) ?? d;
 int _now() => DateTime.now().millisecondsSinceEpoch ~/ 1000;
 
@@ -58,54 +74,69 @@ class AppState extends ChangeNotifier {
   late SharedPreferences _p;
   final _np = FlutterLocalNotificationsPlugin();
 
-  Net net = Net.ap;
-  String host = '', ssid = '', pass = '', plant = '', serverUrl = '', apiKey = '', devId = '', ntfy = '', tg = '';
-  bool nWater = true, nPump = true, nConn = true, nDry = true; // notifikasi di HP (saat app terbuka)
-  bool sw = true, sp = true, sd = true, so = true; // notifikasi push dari server
-  int themeIdx = 0; // 0 sistem, 1 terang, 2 gelap
+  // ---- pengaturan pengguna ----
+  ConnMode mode = ConnMode.auto;
+  String ssid = '', pass = '', plant = '', serverUrl = '', apiKey = '', devId = '', ntfy = '', tg = '';
+  bool nWater = true, nPump = true, nConn = true, nDry = true; // satu set: dipakai di HP & server
+  int themeIdx = 0, paletteIdx = 0;
+  bool pushOn = true;
+  String? fcmToken;
 
+  // ---- koneksi ----
+  Net via = Net.lan;
   Link? _link;
   StreamSubscription<String>? _ls;
-  Timer? _retry, _hist;
-  bool connected = false, busy = false, _got = false, _want = false, online = true;
+  Timer? _retry, _hist, _notifT;
+  bool connected = false, busy = false, online = true;
+  bool _got = false, _want = false, _cancelWait = false;
   int _retries = 0, _nid = 1, _lastSample = 0, _lastDry = 0;
-  String status = 'Belum terhubung';
+  String status = 'Belum terhubung', _lastClip = '', _realId = '';
+  ConnMode _modeBefore = ConnMode.auto;
 
+  // ---- data alat ----
   int soil = 0, raw = 0, hum = 0, minSoil = 55, run = 5, wait = 60, remain = 0, effMin = 55, offAge = 0, cloudState = 0;
   double temp = -99;
   bool water = true, pump = false, auto = true, timeOk = false;
-  String devNet = 'A';
-
+  String devNet = ''; // 'A' = alat masih di mode pemasangan, 'S' = sudah di WiFi rumah
   final cfg = <String, String>{};
   final sched = List.generate(4, (i) => Sched(false, 6 + i * 4, 0, 5, 127));
   final samples = <Sample>[];
   final events = <Ev>[];
   final aiMsgs = <AiMsg>[];
-  String? fcmToken;
-  bool pushOn = true;
+  List<DevInfo> knownDevices = [];
 
-  String get devNetName => devNet == 'S' ? netNames[Net.sta]! : netNames[Net.ap]!;
-  String cfgStr(String k, [String d = '']) => cfg[k] ?? d;
+  // ---- mode uji (simulator di server) ----
+  bool simEnabled = false;
+  String simId = '';
+
+  String cfgStr(String k, [String d = '']) => (cfg[k] ?? '').isEmpty ? d : cfg[k]!;
   int cfgInt(String k, int d) => int.tryParse(cfg[k] ?? '') ?? d;
   bool get serverReady => normUrl(serverUrl).isNotEmpty && apiKey.isNotEmpty;
+  bool get hasPaired => ssid.isNotEmpty || serverReady || devId.isNotEmpty;
+  bool get needsSetup => connected && devNet == 'A';
+  bool get usingSim => simEnabled && devId.isNotEmpty && devId == simId;
+  String get serverHost => Uri.tryParse(normUrl(serverUrl))?.host ?? serverUrl;
 
   Future<void> init() async {
     _p = await SharedPreferences.getInstance();
-    net = Net.values[(_p.getInt('net2') ?? 0) % 3];
-    host = _p.getString('host') ?? '';
+    mode = ConnMode.values[(_p.getInt('mode') ?? 0) % 3];
+    _modeBefore = ConnMode.values[(_p.getInt('modeBefore') ?? 0) % 3];
     ssid = _p.getString('ssid') ?? '';
     pass = _p.getString('pass') ?? '';
     plant = _p.getString('plant') ?? '';
     serverUrl = _p.getString('srv') ?? '';
     apiKey = _p.getString('key') ?? '';
     devId = _p.getString('did') ?? '';
+    _realId = _p.getString('realId') ?? '';
     ntfy = _p.getString('ntfy') ?? '';
     tg = _p.getString('tg') ?? '';
     themeIdx = _p.getInt('theme') ?? 0;
+    paletteIdx = _p.getInt('pal') ?? 0;
     nWater = _p.getBool('nW') ?? true;
     nPump = _p.getBool('nP') ?? true;
     nConn = _p.getBool('nC') ?? true;
     nDry = _p.getBool('nD') ?? true;
+    pushOn = _p.getBool('pushOn') ?? true;
     try {
       for (final e in jsonDecode(_p.getString('hist') ?? '[]') as List) {
         samples.add(Sample(e[0], e[1], (e[2] as num).toDouble(), e[3]));
@@ -120,52 +151,78 @@ class AppState extends ChangeNotifier {
         .resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>()
         ?.createNotificationChannel(const AndroidNotificationChannel('akarsiaga_push', 'Notifikasi Akar Siaga (push)',
             importance: Importance.high));
-    pushOn = _p.getBool('pushOn') ?? true;
     _initPush();
+    loadSim();
   }
 
-  // ---------- koneksi ----------
+  // =================== koneksi otomatis ===================
   Future<void> connect() async {
     _want = true;
     _retries = 0;
     await _connect();
   }
 
+  void _attach(Link l, Net v) {
+    _link = l;
+    via = v;
+    _ls = l.lines.listen(_onLine);
+  }
+
+  Future<void> _detach(Link l) async {
+    await _ls?.cancel();
+    await l.close();
+    _link = null;
+  }
+
+  /// Otomatis: coba Wi-Fi (alat ditemukan di jaringan yang sama), kalau tidak ada pindah ke Cloud.
+  Future<void> _openLink() async {
+    String lanMsg = '';
+    if (mode != ConnMode.cloud) {
+      final h = await discoverHost();
+      if (h != null) {
+        final l = LocalLink(h, _dropped);
+        _attach(l, Net.lan);
+        try {
+          await l.open();
+          return;
+        } catch (e) {
+          await _detach(l);
+          lanMsg = e is String ? e : 'Gagal terhubung lewat Wi-Fi.';
+        }
+      } else {
+        lanMsg = 'Alat tidak ditemukan di Wi-Fi ini.';
+      }
+      if (mode == ConnMode.lan) throw lanMsg;
+    }
+    if (!serverReady || devId.isEmpty) {
+      throw mode == ConnMode.cloud
+          ? 'Cloud belum diatur. Tempel kode sambung di Setelan.'
+          : '$lanMsg Pasang alat baru, atau atur Cloud di Setelan.';
+    }
+    final l = CloudLink(CloudApi(normUrl(serverUrl), apiKey), devId, _dropped);
+    _attach(l, Net.cloud);
+    try {
+      await l.open();
+    } catch (_) {
+      await _detach(l);
+      rethrow;
+    }
+  }
+
   Future<void> _connect() async {
     if (busy || connected) return;
     busy = true;
-    status = net == Net.cloud ? 'Menghubungi server...' : 'Mencari Akar Siaga di jaringan...';
+    status = mode == ConnMode.cloud ? 'Menghubungi server...' : 'Mencari alat...';
     notifyListeners();
     try {
-      Link l;
-      if (net == Net.cloud) {
-        if (!serverReady || devId.isEmpty) {
-          throw 'Isi URL server, kunci API, dan ID alat di Setelan > Koneksi.';
-        }
-        l = CloudLink(CloudApi(normUrl(serverUrl), apiKey), devId, _dropped);
-      } else {
-        String? h = await discoverHost();
-        h ??= net == Net.ap ? '192.168.4.1' : (host.isEmpty ? null : host);
-        if (h == null) throw 'Akar Siaga tidak ditemukan. Pastikan HP satu WiFi dengan alat, atau isi IP manual di Setelan.';
-        l = LocalLink(h, _dropped);
-      }
-      _link = l;
-      _ls = l.lines.listen(_onLine);
-      try {
-        await l.open();
-      } catch (_) {
-        await _ls?.cancel();
-        await l.close();
-        _link = null;
-        rethrow;
-      }
+      await _openLink();
       connected = true;
       _retries = 0;
       online = true;
       status = 'Terhubung';
-      _ev('Terhubung via ${netNames[net]}', 0);
+      _ev('Terhubung via ${netNames[via]}', 0);
       registerPush();
-      if (net == Net.cloud) {
+      if (via == Net.cloud) {
         _loadCloud();
         _hist = Timer.periodic(const Duration(seconds: 60), (_) => _loadCloud());
       }
@@ -238,14 +295,225 @@ class AppState extends ChangeNotifier {
     } catch (_) {}
   }
 
-  // ---------- data masuk ----------
+  void setMode(ConnMode m) {
+    mode = m;
+    _p.setInt('mode', m.index);
+    notifyListeners();
+    if (connected) {
+      disconnect(quiet: true).then((_) => connect());
+    }
+  }
+
+  // =================== pemasangan alat baru ===================
+  /// Apakah alat (mode pemasangan) terjangkau di 192.168.4.1? Sekalian membaca ID alat.
+  Future<bool> probeSetup() async {
+    final t = await fetchLocalAll(setupHost);
+    if (t == null) return false;
+    for (final l in t.split('\n')) {
+      if (l.startsWith('C:')) _parseCfg(l.substring(2));
+    }
+    notifyListeners();
+    return true;
+  }
+
+  /// Kirim WiFi rumah (+ server bila sudah diatur) ke alat, lalu alat restart ke WiFi itu.
+  Future<String?> provisionFromWizard(String s, String pw) async {
+    ssid = s;
+    pass = pw;
+    _p.setString('ssid', s);
+    _p.setString('pass', pw);
+    final cloud = serverReady;
+    final cmds = [
+      'W:$s\t$pw',
+      if (cloud) 'V:${normUrl(serverUrl)}\t$apiKey',
+      'C:cloud=${cloud ? 1 : 0}',
+      'N:S',
+    ];
+    for (final c in cmds) {
+      if (!await sendLocal(setupHost, c)) {
+        return 'Gagal mengirim ke alat. Pastikan HP masih tersambung ke WiFi "AkarSiaga-XXXX".';
+      }
+    }
+    return null;
+  }
+
+  void cancelWait() => _cancelWait = true;
+
+  /// Setelah alat dipasang: coba terhubung berulang sampai alat muncul di WiFi rumah / Cloud.
+  Future<bool> waitForDevice({int seconds = 110}) async {
+    _cancelWait = false;
+    await disconnect(quiet: true);
+    final end = DateTime.now().add(Duration(seconds: seconds));
+    while (DateTime.now().isBefore(end) && !_cancelWait) {
+      await _connect();
+      if (connected && devNet == 'S') {
+        _want = true;
+        _retries = 0;
+        return true;
+      }
+      if (connected) await disconnect(quiet: true); // masih mode pemasangan / belum siap
+      await Future.delayed(const Duration(seconds: 3));
+    }
+    return false;
+  }
+
+  // =================== kode sambung & alat ===================
+  /// Kode sambung "AKS1.<base64>" berisi URL + kunci server. Dibuat server (lihat log server).
+  String? applyPairCode(String code) {
+    code = code.trim();
+    if (!code.startsWith('AKS1.')) return 'Kode tidak dikenali. Salin ulang baris "Kode sambung" dari log server.';
+    try {
+      final j = jsonDecode(utf8.decode(base64Url.decode(base64.normalize(code.substring(5))))) as Map<String, dynamic>;
+      final u = (j['u'] ?? '').toString(), k = (j['k'] ?? '').toString();
+      if (u.isEmpty || k.isEmpty) return 'Kode tidak lengkap.';
+      serverUrl = u;
+      apiKey = k;
+      _p.setString('srv', u);
+      _p.setString('key', k);
+      notifyListeners();
+      loadSim();
+      return null;
+    } catch (_) {
+      return 'Kode rusak. Salin ulang dari log server.';
+    }
+  }
+
+  /// Kode baru di clipboard (sekali saja per kode) - untuk dialog "pakai kode ini?".
+  Future<String?> clipboardCode() async {
+    try {
+      final t = ((await Clipboard.getData(Clipboard.kTextPlain))?.text ?? '').trim();
+      if (t.startsWith('AKS1.') && t != _lastClip) {
+        _lastClip = t;
+        return t;
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  /// Tombol "Tempel kode sambung": baca clipboard, pakai, lalu pilih alat otomatis.
+  Future<String> pasteCode() async {
+    String t = '';
+    try {
+      t = ((await Clipboard.getData(Clipboard.kTextPlain))?.text ?? '').trim();
+    } catch (_) {}
+    if (!t.startsWith('AKS1.')) return 'Clipboard tidak berisi kode sambung. Salin dulu dari log server.';
+    final err = applyPairCode(t);
+    if (err != null) return err;
+    final pick = await autoSelectDevice();
+    return pick ?? 'Server terhubung. Alat dipilih otomatis ($devId).';
+  }
+
+  CloudApi? _srv() => serverReady ? CloudApi(normUrl(serverUrl), apiKey) : null;
+  CloudApi? _api() => (serverReady && devId.isNotEmpty) ? CloudApi(normUrl(serverUrl), apiKey) : null;
+
+  Future<List<DevInfo>> fetchDevices() async {
+    final a = _srv();
+    if (a == null) return [];
+    final j = jsonDecode(await a.getText('/api/app/devices', {})) as List;
+    return [for (final e in j) DevInfo(e['id'].toString(), (e['name'] ?? '').toString(), e['online'] == true, e['sim'] == true)];
+  }
+
+  /// Pilih alat otomatis dari daftar server. Mengembalikan pesan bila belum bisa memilih (null = berhasil).
+  Future<String?> autoSelectDevice() async {
+    try {
+      final all = await fetchDevices();
+      knownDevices = all;
+      final real = all.where((d) => !d.sim).toList();
+      final pool = real.isNotEmpty ? real : all; // alat asli diutamakan dibanding simulator
+      if (pool.isEmpty) {
+        notifyListeners();
+        return 'Belum ada alat yang pernah tersambung ke server.';
+      }
+      final online = pool.where((d) => d.online).toList();
+      final pick = online.length == 1 ? online.first : (pool.length == 1 ? pool.first : null);
+      if (pick == null) {
+        notifyListeners();
+        return 'Ada ${pool.length} alat. Pilih salah satu di Setelan > Pengaturan lanjutan > Server.';
+      }
+      setDevId(pick.id);
+      return null;
+    } catch (e) {
+      return 'Server tidak bisa dihubungi: ${e is ApiError ? e.message : 'periksa URL dan kunci'}';
+    }
+  }
+
+  void setDevId(String id) {
+    devId = id;
+    _p.setString('did', id);
+    notifyListeners();
+  }
+
+  void saveNet(String s, String pw, String url, String key, String id) {
+    ssid = s;
+    pass = pw;
+    serverUrl = url;
+    apiKey = key;
+    devId = id;
+    _p.setString('ssid', s);
+    _p.setString('pass', pw);
+    _p.setString('srv', url);
+    _p.setString('key', key);
+    _p.setString('did', id);
+    notifyListeners();
+    loadSim();
+    registerPush();
+  }
+
+  // =================== mode uji (simulator) ===================
+  Future<void> loadSim() async {
+    final a = _srv();
+    if (a == null) return;
+    try {
+      final j = await a.getJson('/api/sim/status', {});
+      simEnabled = j['enabled'] == true;
+      simId = (j['id'] ?? '').toString();
+      notifyListeners();
+    } catch (_) {}
+  }
+
+  Future<String?> setUseSim(bool on) async {
+    if (on) {
+      await loadSim();
+      if (!simEnabled) return 'Mode uji belum aktif di server (set SIMULATOR=1).';
+      if (devId != simId) {
+        _realId = devId;
+        _p.setString('realId', devId);
+      }
+      _modeBefore = mode;
+      _p.setInt('modeBefore', mode.index);
+      devId = simId;
+      mode = ConnMode.cloud;
+    } else {
+      devId = _realId;
+      mode = _modeBefore;
+    }
+    _p.setString('did', devId);
+    _p.setInt('mode', mode.index);
+    await disconnect(quiet: true);
+    notifyListeners();
+    if (devId.isNotEmpty) connect();
+    return null;
+  }
+
+  Future<String> simScenario(String name) async {
+    final a = _srv();
+    if (a == null) return 'Server belum diatur.';
+    try {
+      await a.post('/api/sim/scenario', {'name': name}, '');
+      return 'Skenario dijalankan. Perubahan muncul dalam beberapa detik.';
+    } catch (e) {
+      return 'Gagal: ${e is ApiError ? e.message : e}';
+    }
+  }
+
+  // =================== data masuk ===================
   void _parseCfg(String body) {
     for (final kv in body.split(';')) {
       final i = kv.indexOf('=');
       if (i > 0) cfg[kv.substring(0, i)] = kv.substring(i + 1);
     }
     final id = cfg['id'] ?? '';
-    if (id.isNotEmpty && id != devId) {
+    if (id.isNotEmpty && id != devId && !usingSim) {
       devId = id;
       _p.setString('did', id);
     }
@@ -324,8 +592,8 @@ class AppState extends ChangeNotifier {
       _lastDry = now;
       _notify('Tanah kering', 'Kelembaban $soil%. Mode manual aktif - siram sekarang?', nDry);
     }
-    // Di mode Cloud, riwayat & kejadian dicatat server (24 jam non-stop), bukan HP.
-    if (net != Net.cloud && now - _lastSample >= 30) {
+    // Di jalur Cloud, riwayat & kejadian dicatat server (24 jam non-stop), bukan HP.
+    if (via == Net.lan && now - _lastSample >= 30) {
       _lastSample = now;
       samples.add(Sample(now, soil, temp, hum));
       if (samples.length > 2000) samples.removeAt(0);
@@ -334,7 +602,7 @@ class AppState extends ChangeNotifier {
   }
 
   void _ev(String t, int k) {
-    if (net == Net.cloud) return;
+    if (via == Net.cloud) return;
     events.insert(0, Ev(_now(), t, k));
     if (events.length > 100) events.removeLast();
     _p.setString('ev', jsonEncode(events.map((e) => [e.t, e.text, e.kind]).toList()));
@@ -353,7 +621,7 @@ class AppState extends ChangeNotifier {
     );
   }
 
-  // ---------- aksi ----------
+  // =================== aksi ===================
   Future<void> setAuto(bool a) => send(a ? 'M:A' : 'M:M');
   Future<void> togglePump() => send(pump ? 'P:0' : 'P:1');
   Future<void> tune(int m, int r, int w) => send('T:$m,$r,$w');
@@ -381,59 +649,19 @@ class AppState extends ChangeNotifier {
     return send('S:$i,${s.en ? 1 : 0},${s.h},${s.m},${s.dur},${s.days}');
   }
 
-  void setNet(Net n) {
-    net = n;
-    _p.setInt('net2', n.index);
-    notifyListeners();
-  }
-
   void setTheme(int i) {
     themeIdx = i;
     _p.setInt('theme', i);
     notifyListeners();
   }
 
-  void saveNet(String s, String pw, String url, String key, String id, String h) {
-    ssid = s;
-    pass = pw;
-    serverUrl = url;
-    apiKey = key;
-    devId = id;
-    host = h;
-    _p.setString('ssid', s);
-    _p.setString('pass', pw);
-    _p.setString('srv', url);
-    _p.setString('key', key);
-    _p.setString('did', id);
-    _p.setString('host', h);
-    registerPush();
+  void setPalette(int i) {
+    paletteIdx = i;
+    _p.setInt('pal', i);
     notifyListeners();
   }
 
-  /// Kirim WiFi (+ server) ke alat lalu restart ke mode Router/Cloud.
-  Future<void> provision() async {
-    final useCloud = serverReady;
-    if (ssid.isNotEmpty) await send('W:$ssid\t$pass');
-    if (useCloud) await send('V:${normUrl(serverUrl)}\t$apiKey');
-    await send('C:cloud=${useCloud ? 1 : 0}');
-    await send('N:S');
-    await _afterSwitch(useCloud ? Net.cloud : Net.sta,
-        'Alat restart & masuk WiFi "$ssid". Tunggu ±20 detik, lalu tekan Hubungkan.');
-  }
-
-  Future<void> toHotspot() async {
-    await send('N:A');
-    await _afterSwitch(Net.ap, 'Alat restart ke Hotspot. Sambungkan HP ke WiFi "AkarSiaga-XXXX", lalu tekan Hubungkan.');
-  }
-
-  Future<void> _afterSwitch(Net n, String msg) async {
-    await Future.delayed(const Duration(milliseconds: 700));
-    await disconnect(quiet: true);
-    setNet(n);
-    status = msg;
-    notifyListeners();
-  }
-
+  // =================== notifikasi (satu set untuk HP & server) ===================
   void setNotif({bool? w, bool? p, bool? c, bool? d}) {
     nWater = w ?? nWater;
     nPump = p ?? nPump;
@@ -444,10 +672,9 @@ class AppState extends ChangeNotifier {
     _p.setBool('nC', nConn);
     _p.setBool('nD', nDry);
     notifyListeners();
+    _notifT?.cancel(); // simpan ke server otomatis (tanpa tombol)
+    _notifT = Timer(const Duration(milliseconds: 900), () => saveServerNotify());
   }
-
-  // ---------- notifikasi push dari server ----------
-  CloudApi? _api() => (serverReady && devId.isNotEmpty) ? CloudApi(normUrl(serverUrl), apiKey) : null;
 
   Future<void> loadServerNotify() async {
     final a = _api();
@@ -456,10 +683,10 @@ class AppState extends ChangeNotifier {
       final j = await a.getJson('/api/app/notify', {'id': devId});
       ntfy = (j['ntfy'] ?? '').toString();
       tg = (j['tg'] ?? '').toString();
-      sw = j['w'] != false;
-      sp = j['p'] != false;
-      sd = j['d'] != false;
-      so = j['o'] != false;
+      nWater = j['w'] != false;
+      nPump = j['p'] != false;
+      nDry = j['d'] != false;
+      nConn = j['o'] != false;
       notifyListeners();
     } catch (_) {}
   }
@@ -469,7 +696,7 @@ class AppState extends ChangeNotifier {
     if (a == null) return 'Isi URL server, kunci API, dan ID alat dulu.';
     try {
       await a.post('/api/app/notify', {'id': devId},
-          jsonEncode({'ntfy': ntfy.trim(), 'tg': tg.trim(), 'w': sw, 'p': sp, 'd': sd, 'o': so}));
+          jsonEncode({'ntfy': ntfy.trim(), 'tg': tg.trim(), 'w': nWater, 'p': nPump, 'd': nDry, 'o': nConn}));
       _p.setString('ntfy', ntfy.trim());
       _p.setString('tg', tg.trim());
       return 'Tersimpan di server.';
@@ -480,16 +707,18 @@ class AppState extends ChangeNotifier {
 
   Future<String> testServerNotify() async {
     final a = _api();
-    if (a == null) return 'Isi URL server, kunci API, dan ID alat dulu.';
+    if (a == null) return 'Hubungkan ke server dulu (Setelan > Koneksi).';
     try {
       final r = await a.post('/api/app/test', {'id': devId}, '');
-      return r.startsWith('0/') ? 'Tidak ada tujuan yang aktif. Isi topik ntfy atau Chat ID Telegram, lalu Simpan.' : 'Tes terkirim ($r berhasil).';
+      return r.startsWith('0/')
+          ? 'Belum ada tujuan push yang aktif. Aktifkan Firebase, atau isi ntfy/Telegram di Pengaturan lanjutan.'
+          : 'Tes terkirim ($r berhasil).';
     } catch (e) {
       return 'Gagal: $e';
     }
   }
 
-  // ---------- push Firebase ----------
+  // =================== push Firebase ===================
   Future<void> _initPush() async {
     if (!pushAvailable) return;
     fcmToken = await initPush((t) {
@@ -509,7 +738,7 @@ class AppState extends ChangeNotifier {
     if (!pushAvailable) return 'Build ini belum memakai Firebase.';
     final t = fcmToken, a = _api();
     if (t == null) return 'Token Firebase belum tersedia (cek izin notifikasi dan konfigurasi Firebase).';
-    if (a == null || devId.isEmpty) return 'Isi URL server, kunci API, dan ID alat dulu.';
+    if (a == null) return 'Hubungkan ke server dulu.';
     try {
       await a.post('/api/app/push', {'id': devId}, jsonEncode({'token': t, 'enabled': pushOn}));
       return pushOn ? 'HP ini terdaftar untuk push.' : 'Push untuk HP ini dimatikan.';
@@ -518,13 +747,13 @@ class AppState extends ChangeNotifier {
     }
   }
 
-  // ---------- asisten AI ----------
+  // =================== asisten AI ===================
   AiService? aiService() =>
       (serverReady && devId.isNotEmpty) ? AiService(CloudApi(normUrl(serverUrl), apiKey), devId) : null;
 
   String _p2(int n) => n.toString().padLeft(2, '0');
 
-  /// Ringkasan kondisi alat untuk AI. Dikirim apa adanya ke server (bukan rahasia: tanpa WiFi/kunci).
+  /// Ringkasan kondisi alat untuk AI (tanpa WiFi/kunci).
   Map<String, dynamic> aiContext() {
     final since = _now() - 86400;
     final d = samples.where((e) => e.t >= since).toList();
